@@ -13,6 +13,7 @@ import { applyTarget, EMPTY_TARGET, type Target } from '@/lib/ruleout'
 import { subProtos } from '@/lib/subnodes'
 import { isSubSource } from '@/lib/validate'
 import { PRESETS } from '@/lib/dnspresets'
+import { ownSettings } from '@/lib/ownsettings'
 import { S } from '@/copy'
 import { PluginGuard, SlotView } from '@/plugins/boundary'
 import { registry, useRegistry, type Reg } from '@/plugins/registry'
@@ -34,6 +35,8 @@ const PRESET_TITLE = new Map(S.dns.presetTitles)
 
 /** Отметка «мастер пройден» в памяти интерфейса на роутере. */
 export async function setupDone(): Promise<boolean> {
+    /* Человек выключил мастер в настройках Andromeda (схема плагина, `setup_wizard`): считаем пройденным. */
+    if (!(await ownSettings()).setup_wizard) return true
     try {
         const r = await rpc.uiGet()
         return !!(r.state && (JSON.parse(r.state) as { setup?: number }).setup)

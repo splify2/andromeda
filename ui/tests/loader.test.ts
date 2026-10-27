@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Загрузчик LuCI (luci/htdocs/luci-static/resources/view/splify2/home.js) — единственный наш
+// Загрузчик LuCI (plugin/luci/home.js) — единственный наш
 // код, который исполняется ДО бандла, и потому единственное место, где можно что-то сделать с
 // задержкой открытия. Замерено на роутере: цепочка стояла ступеньками — загрузчик, потом
 // build-id.txt (223 мс), потом бандл, потом его общий чанк (184 мс). Полторы секунды до первой
@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // тот же приём, что у стендов движка, включающих исходник.
 
 const SRC = readFileSync(
-    resolve(__dirname, '../../luci/htdocs/luci-static/resources/view/splify2/home.js'),
+    resolve(__dirname, '../../plugin/luci/home.js'),
     'utf8',
 )
 
@@ -60,22 +60,22 @@ describe('загрузчик: бандл уходит в загрузку, не 
     it('следующее открытие: сборка прошлого номера уходит в загрузку сразу', () => {
         window.localStorage.setItem('splify2:build-id', '26.9.10')
         loadView()
-        expect(scripts()).toEqual(['/luci-static/resources/splify2/splify-index.js?v=26.9.10'])
+        expect(scripts()).toEqual(['/luci-static/resources/view/splify2/p-andromeda/splify-index.js?v=26.9.10'])
         // Общий чанк — тем же заходом: его находит только разбор splify-index.js, то есть ещё
         // через один поход в сеть.
         const pre = document.head.querySelector('link[rel=modulepreload]')
-        expect(pre?.getAttribute('href')).toBe('/luci-static/resources/splify2/splify-x.js?v=26.9.10')
+        expect(pre?.getAttribute('href')).toBe('/luci-static/resources/view/splify2/p-andromeda/splify-x.js?v=26.9.10')
         // И оформление того же номера: разные номера означали бы разметку одной сборки и
         // стили другой.
         const css = document.head.querySelector('link[rel=stylesheet]')
-        expect(css?.getAttribute('href')).toBe('/luci-static/resources/splify2/splify-index.css?v=26.9.10')
+        expect(css?.getAttribute('href')).toBe('/luci-static/resources/view/splify2/p-andromeda/splify-index.css?v=26.9.10')
     })
 
     it('номер совпал — второй раз тот же бандл не подключается', () => {
         window.localStorage.setItem('splify2:build-id', '26.9.10')
         const v = loadView()
         v.render('26.9.10')
-        expect(scripts()).toEqual(['/luci-static/resources/splify2/splify-index.js?v=26.9.10'])
+        expect(scripts()).toEqual(['/luci-static/resources/view/splify2/p-andromeda/splify-index.js?v=26.9.10'])
     })
 
     it('пакет обновили, номер разошёлся — подключается правильная сборка', () => {
@@ -83,8 +83,8 @@ describe('загрузчик: бандл уходит в загрузку, не 
         const v = loadView()
         v.render('27.0.0')
         expect(scripts()).toEqual([
-            '/luci-static/resources/splify2/splify-index.js?v=26.9.10',
-            '/luci-static/resources/splify2/splify-index.js?v=27.0.0',
+            '/luci-static/resources/view/splify2/p-andromeda/splify-index.js?v=26.9.10',
+            '/luci-static/resources/view/splify2/p-andromeda/splify-index.js?v=27.0.0',
         ])
         // И номер запоминается — следующее открытие начнётся уже с него.
         expect(window.localStorage.getItem('splify2:build-id')).toBe('27.0.0')

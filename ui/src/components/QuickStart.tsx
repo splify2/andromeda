@@ -6,6 +6,7 @@ import { inputCls } from '@/components/formbits'
 import { notify } from '@/lib/notify'
 import { pending, usePending } from '@/lib/pending'
 import { rpc } from '@/lib/rpc'
+import { ownSettings } from '@/lib/ownsettings'
 import { useCatalog, useLocalLists } from '@/lib/catalog'
 import { makeSubOutput } from '@/lib/suboutput'
 import { isSubSource } from '@/lib/validate'
@@ -24,6 +25,8 @@ import { S } from '@/copy'
 const KEY = 'quick'
 
 async function dismissed(): Promise<boolean> {
+    /* Человек выключил быстрый старт в настройках Andromeda (схема плагина, `quick_start`). */
+    if (!(await ownSettings()).quick_start) return true
     try {
         const r = await rpc.uiGet()
         return !!(r.state && (JSON.parse(r.state) as Record<string, unknown>)[KEY])

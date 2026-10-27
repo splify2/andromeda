@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Check } from 'lucide-react'
+import { rpc } from '@/lib/rpc'
+import { setHostPaths } from '@/lib/hostpaths'
 import { useLive, type Live } from '@/lib/live'
 import { pending, usePending } from '@/lib/pending'
 import { isPart, type ServiceEntry } from '@/lib/model'
@@ -81,6 +83,8 @@ export default function Console({ extra, railHost, board = false, settingsHost, 
 } = {}) {
     const [section, setSection] = useState<SectionId | string>('home')
     const live = useLive()
+    /* Каталоги хоста (списки, спека, подписки): интерфейс не зашивает их, а спрашивает `paths` один раз за сессию. */
+    useEffect(() => { void rpc.paths().then(setHostPaths).catch(() => undefined) }, [])
     const { spec, shown, savedFlash, loadFailed, retry } = usePending()
     /* Мастер первоначальной настройки (приложение для ПК): по просьбе установки — сразу; роутер без
      * единого правила, где мастер не пройден и не пропущен, — один раз сам. */

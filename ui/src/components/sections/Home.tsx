@@ -10,6 +10,7 @@ import { LooseBlock, SubBlock, TunnelBlock, type Facts } from '@/components/Outp
 import { deadline, rpc, type SubQuota } from '@/lib/rpc'
 import { subsRemember, subsRemembered } from '@/lib/subs'
 import { explainSummary } from '@/lib/engineerr'
+import { hostPaths } from '@/lib/hostpaths'
 import QuickStart from '@/components/QuickStart'
 import { blankInstall } from '@/lib/blank'
 import { human, type DiagCheck, type Live } from '@/lib/live'
@@ -1102,7 +1103,7 @@ function OutputsColumn({
      * называет файл полностью. Без приведения выход своей же подписки в её блок не попадал. */
     const subOf = (n: string, o: OutputStatus) => {
         const p = spec?.outputs?.[n]?.sub_file || o.sub_file || ''
-        return p && !p.startsWith('/') ? `/etc/steer/${p}` : p
+        return p && !p.startsWith('/') ? `${hostPaths().specDir}/${p}` : p
     }
     const ref = ([name, st]: [string, OutputStatus]) => ({
         name, st, facts: facts[name], phase: live.phase,

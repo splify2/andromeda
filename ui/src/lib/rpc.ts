@@ -127,16 +127,6 @@ declare global {
  *
  *  Мост, однажды полученный, запоминается: `rpc.declare` у LuCI не бесплатный, а методов
  *  под сорок. */
-/** Модуль ядра 2.0 в ответе steer_modules. */
-export interface SteerModule {
-    name: string
-    installed: boolean
-    version?: string
-    needed: boolean
-    /** Выходы спеки, которым он нужен, через запятую. */
-    outputs?: string
-}
-
 function declare<T>(method: string, params: string[] = []) {
     let call: ((...a: unknown[]) => Promise<unknown>) | null = null
     return (...args: unknown[]): Promise<T> => {
@@ -625,24 +615,27 @@ export const rpc = {
         modules?: string[]
     }>('steer_install', ['version', 'modules']),
 
-    /** Модули ядра 2.0 для карточки в «Интерфейс»: стоит ли, версия пакета, нужен ли спеке и каким
-     *  выходам. `core` — версия steer-core; пусто — ставить модули некуда. */
-    steerModules: declare<{
-        core: string
-        busy?: string
-        modules: SteerModule[]
-    }>('steer_modules'),
-
-    /** Поставить модуль версией стоящего steer-core. */
-    steerModuleAdd: declare<{ ok: boolean; error?: string; installed?: string; via?: string; output?: string }>(
-        'steer_module_add', ['module']),
-
-    /** Снять модуль. Нужный спеке не снимается — отказ называет выходы. */
-    steerModuleDel: declare<{ ok: boolean; error?: string }>('steer_module_del', ['module']),
-
     // ── Плагины (docs/rpcd-api.md, «Плагины»). Бэкенд — тонкая обёртка над `steer plugin … --json`.
     /** Стоящие плагины, подключённые репозитории, версия host API бэкенда. */
     pluginsList: declare<PluginsListReply>('plugins_list'),
+
+    /** Настройки плагина по его схеме (`splify2.settings.schema`): значения человека и сама схема — умолчания лежат в ней. */
+    pluginSettingsGet: declare<{
+        ok: boolean
+        error?: string
+        id?: string
+        schema?: { properties?: Record<string, { default?: unknown }> }
+        values?: Record<string, unknown>
+    }>('plugin_settings_get', ['id']),
+
+    /** Каталоги хоста (splify2-api 1.1, метод `paths`): списки, спека, подписки, ядро. Интерфейс не зашивает их сам. */
+    paths: declare<{
+        ok: boolean
+        lists?: string
+        spec_dir?: string
+        subs_dir?: string
+        steer?: string
+    }>('paths'),
     /** Поиск по каталогам подключённых репозиториев; без слова — весь каталог. */
     pluginsSearch: declare<{ plugins: unknown[] }>('plugins_search', ['query']),
     /** Установка и обновление — задания: ответ `{ok, job}`, ход — `pluginJob`. */

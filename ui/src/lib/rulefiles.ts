@@ -5,15 +5,16 @@
  *  scripts/check-dist.mjs валил сборку. В src/lib они уезжают в общий кусок. */
 import { rpc } from '@/lib/rpc'
 import { type Channel, type Narrow, type ServiceEntry } from '@/lib/model'
+import { hostPaths } from '@/lib/hostpaths'
 
 /** Путь, по которому движок будет искать список. Повторяет путь у издателя, а не берёт от него
  *  одно имя файла: иначе адресный `hodca.lst` и доменный `domains/hodca.lst` становятся одним
  *  локальным файлом и затирают друг друга. Ровно это и случилось однажды — nft отверг набор
  *  ЦЕЛИКОМ, и встала вся маршрутизация, а не один канал. Правило продублировано в бэкенде
  *  (`local_path`), и это единственное место, где дублирование терпимо: разойдясь, они дадут
- *  «список скачан, а правило его не находит». */
+ *  «список скачан, а правило его не находит». Каталог списков называет хост (`paths`, lib/hostpaths.ts). */
 export function pathFor(file: string) {
-    return `/etc/steer/lists/${file.replace(/^\/+/, '')}`
+    return `${hostPaths().lists}/${file.replace(/^\/+/, '')}`
 }
 
 /** Путь набора, который правило берёт ФАЙЛОМ: запись каталога без «.lst»
@@ -34,7 +35,7 @@ export function serviceFiles(sv: ServiceEntry): string[] {
     return [...files.map(pathFor), ...(sv.srs ? files.map(srsPathFor) : [])]
 }
 
-const relOf = (p: string) => p.replace(/^\/etc\/steer\/lists\//, '').replace(/^\/+/, '')
+const relOf = (p: string) => (p.startsWith(`${hostPaths().lists}/`) ? p.slice(hostPaths().lists.length + 1) : p).replace(/^\/+/, '')
 
 /** Сервис уже лежит на роутере — списками или набором. */
 export function onRouter(sv: ServiceEntry, local: Record<string, unknown>): boolean {

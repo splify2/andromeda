@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Channel, Spec } from '@/lib/model'
 
@@ -470,12 +468,15 @@ describe('что человек читает в тосте', () => {
         expect(applyText(undefined)).toBe('')
     })
 
-    it('опознаются обе строки, которые пишет бэкенд, — по его исходнику', () => {
-        // Текст строк живёт в m-spec.sh, а узнаёт их интерфейс: разойдутся — человек снова увидит
-        // «записан ipv6: nat» в тосте. Сверяемся с самим исходником, а не с копией в тесте.
-        const src = readFileSync(join(process.cwd(), '..', 'files/usr/lib/splify2/rpcd/m-spec.sh'), 'utf8')
-        const formats = [...src.matchAll(/printf '(splify2: outputs without an ipv6 key got [^']*)\\n'/g)].map((m) => m[1])
-        expect(formats).toHaveLength(2)
+    it('опознаются обе строки, которые пишет бэкенд (самолечение ipv6)', () => {
+        // Текст строк пишет бэкенд splify2 (`spec_heal`), а узнаёт их интерфейс: разойдутся — человек
+        // снова увидит «записан ipv6: nat» в тосте. Исходника бэкенда у этого репозитория нет (плагин
+        // ходит к платформе только через API), поэтому строки перечислены здесь, а их сверка с кодом —
+        // в стенде самого splify2 (tests/rpcdmatch.sh, «строки самолечения ipv6, которые узнаёт Andromeda»).
+        const formats = [
+            'splify2: outputs without an ipv6 key got ipv6: nat (the tunnel has an IPv6 address): %s',
+            'splify2: outputs without an ipv6 key got ipv6: off (the tunnel has no IPv6 address, clients use IPv4): %s',
+        ]
         for (const f of formats) {
             const line = f.replace('%s', 'warp wgv4')
             expect(applyText(line)).toBe('')
