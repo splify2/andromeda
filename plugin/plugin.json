@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "id": "andromeda",
+  "version": "26.11.0",
+  "type": "plugin",
+  "name": "Andromeda",
+  "description": "The splify2 panel: rules, outputs, subscriptions, DNS, requests and diagnostics on one page",
+  "homepage": "https://github.com/splify2/andromeda",
+  "compat": {
+    "splify2-api": "^1.1"
+  },
+  "arch": "all",
+  "requires": {
+    "plugins": {
+      "lists-catalog": "^1.0",
+      "subscriptions": "^1.0",
+      "backup": "^1.0",
+      "node-check": "^1.0",
+      "updater": "^1.0"
+    }
+  },
+  "i18n": {
+    "languages": [
+      "ru",
+      "en"
+    ]
+  },
+  "splify2": {
+    "luci": {
+      "interface": "luci/home.js"
+    },
+    "settings": {
+      "schema": "settings.schema.json"
+    }
+  }
+}

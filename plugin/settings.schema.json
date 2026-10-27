@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Andromeda",
+  "type": "object",
+  "properties": {
+    "setup_wizard": {
+      "type": "boolean",
+      "title": "Setup wizard",
+      "description": "Offer the first-time setup on a router that has no rules yet.",
+      "default": true
+    },
+    "quick_start": {
+      "type": "boolean",
+      "title": "Quick start",
+      "description": "Show the three-step start card on an empty main page.",
+      "default": true
+    }
+  }
+}

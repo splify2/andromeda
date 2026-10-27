@@ -1,0 +1,7 @@
+build/
+out/
+ui/node_modules
+ui/dist
+desktop/node_modules
+desktop/dist/
+desktop/release/
