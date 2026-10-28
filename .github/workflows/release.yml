@@ -1,0 +1,172 @@
+name: Выпуск
+
+# Выпуск плагина Andromeda по кнопке: стенды, сборка out/andromeda-<версия>-all.s2p с подписью ключом роли plugins,
+# выпуск vВЕРСИЯ здесь (его архив берёт в семя выпуск splify2), индекс splify2-core-plugins (gh-pages репозитория
+# splify2/splify2-core-plugins) и перечень выпусков splify2/releases.
+#
+# Секреты: S2P_KEY_PLUGINS — подпись архива (без него выпуск не начинается); у стабильного выпуска ещё S2P_KEY_INDEX
+# (подпись индекса) и PLUGINS_TOKEN (запись в splify2/splify2-core-plugins); RELEASES_TOKEN — по желанию.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Версия — та, что в VERSION и plugin/plugin.json (например 26.11.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Предварительный выпуск: без индекса splify2-core-plugins'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+
+      - name: Версия и список изменений
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -eu
+          V="$INPUT_VERSION"
+          echo "$V" | grep -qE '^[0-9]+(\.[0-9]+)+$' || { echo "::error::версия '$V' — не числа через точку"; exit 1; }
+          # Версию меняет коммит, а не выпуск: она же стоит в plugin/plugin.json, и build.sh сверяет их.
+          [ "$(cat VERSION)" = "$V" ] || { echo "::error::в VERSION $(cat VERSION), а выпускается $V — поднимите версию коммитом"; exit 1; }
+          awk -v v="$V" '$0 == "## " v { f = 1; next } /^## / { if (f) exit } f' CHANGELOG.md > "$RUNNER_TEMP/changes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/changes.md"; then
+            if [ "$INPUT_PRERELEASE" = true ]; then echo "::warning::в CHANGELOG.md нет раздела «## $V»"
+            else echo "::error::в CHANGELOG.md нет раздела «## $V»"; exit 1; fi
+          fi
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+
+      - name: Ключи подписи
+        env:
+          S2P_KEY_PLUGINS: ${{ secrets.S2P_KEY_PLUGINS }}
+          S2P_KEY_INDEX: ${{ secrets.S2P_KEY_INDEX }}
+          PLUGINS_TOKEN: ${{ secrets.PLUGINS_TOKEN }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -eu
+          miss=""
+          [ -n "$S2P_KEY_PLUGINS" ] || miss="$miss S2P_KEY_PLUGINS"
+          if [ "$INPUT_PRERELEASE" != true ]; then
+            [ -n "$S2P_KEY_INDEX" ] || miss="$miss S2P_KEY_INDEX"
+            [ -n "$PLUGINS_TOKEN" ] || miss="$miss PLUGINS_TOKEN"
+          fi
+          [ -z "$miss" ] || { echo "::error::нет секретов:$miss — плагин и индекс подписываются только ключами splify2"; exit 1; }
+          K="$RUNNER_TEMP/s2p-keys"
+          mkdir -p "$K"
+          ( umask 077; printf '%s\n' "$S2P_KEY_PLUGINS" > "$K/plugins.sec"
+            [ -z "$S2P_KEY_INDEX" ] || printf '%s\n' "$S2P_KEY_INDEX" > "$K/index.sec" )
+          python3 - "$K/plugins.sec" "$K/plugins.pub" <<'PY'
+          import base64, sys
+          lines = [l for l in open(sys.argv[1]).read().splitlines() if l.strip()]
+          raw = base64.b64decode(lines[-1])
+          if len(raw) != 104 or raw[:4] != b"EdBK" or any(raw[4:8]):
+              sys.exit("S2P_KEY_PLUGINS — не закрытый ключ usign без пароля")
+          open(sys.argv[2], "w").write("untrusted comment: splify2 plugins key %s\n%s\n"
+              % (raw[32:40].hex(), base64.b64encode(b"Ed" + raw[32:40] + raw[72:104]).decode()))
+          PY
+          echo "S2P_KEYS=$K" >> "$GITHUB_ENV"
+
+      - name: SDK плагинов и splify2
+        env:
+          SDK_REF: ${{ vars.PLUGIN_SDK_REF || 'main' }}
+          SPLIFY2_REF: ${{ vars.SPLIFY2_REF || 'main' }}
+        run: |
+          set -eu
+          git clone -q --depth 1 --branch "$SDK_REF" https://github.com/splify2/plugin-sdk "$GITHUB_WORKSPACE/../plugin-sdk"
+          ( cd "$GITHUB_WORKSPACE/../plugin-sdk" && sh build.sh )
+          git clone -q --depth 1 --branch "$SPLIFY2_REF" https://github.com/splify2/splify2 "$GITHUB_WORKSPACE/../splify2"
+          echo "PLUGIN_SDK=$GITHUB_WORKSPACE/../plugin-sdk" >> "$GITHUB_ENV"
+          echo "SPLIFY2=$GITHUB_WORKSPACE/../splify2" >> "$GITHUB_ENV"
+
+      # Стенды — на неподписанной сборке; подписанную делает следующий шаг и проверяет её тем же стендом плагина.
+      - name: Стенды
+        run: sh tests/run.sh
+
+      - name: Собрать и подписать
+        run: |
+          set -eu
+          # Сборка с тегом vВЕРСИЯ на этом коммите: номер сборки в панели — ровно версия, без ревизии.
+          git tag "v$VERSION"
+          S2P_KEY="$S2P_KEYS/plugins.sec" sh build.sh
+          a="out/andromeda-$VERSION-all.s2p"
+          test -f "$a" || { echo "::error::нет $a"; exit 1; }
+          "$PLUGIN_SDK/bin/s2p" verify "$a" --pub "$S2P_KEYS/plugins.pub"
+          PLUGIN_SDK="$PLUGIN_SDK" sh tests/plugin.sh
+
+      - name: Опубликовать выпуск
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: Andromeda ${{ env.VERSION }}
+          prerelease: ${{ inputs.prerelease }}
+          files: out/andromeda-${{ env.VERSION }}-all.s2p
+          body_path: ${{ runner.temp }}/changes.md
+
+      - name: Опубликовать в splify2-core-plugins
+        if: ${{ !inputs.prerelease }}
+        env:
+          PUBLISH_TOKEN: ${{ secrets.PLUGINS_TOKEN }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/idx"
+          cp "out/andromeda-$VERSION-all.s2p" "$RUNNER_TEMP/idx/"
+          echo '{"plugins":{"andromeda":{"default":true,"key_role":"plugins","tags":["interface"]}}}' > "$RUNNER_TEMP/meta.json"
+          S2P="$PLUGIN_SDK/bin/s2p" INDEX_SLUG=splify2/splify2-core-plugins INDEX_ID=splify2-core-plugins \
+            INDEX_NAME='splify2 core plugins' INDEX_KEY="$S2P_KEYS/index.sec" PUBS="$S2P_KEYS/plugins.pub" \
+            ARCHIVES="$RUNNER_TEMP/idx" META="$RUNNER_TEMP/meta.json" sh "$PLUGIN_SDK/tools/publish-index.sh"
+
+      - name: Доступ к splify2/releases
+        id: releases
+        env:
+          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          if [ -n "$RELEASES_TOKEN" ]; then echo "ok=1" >> "$GITHUB_OUTPUT"
+          else echo "::warning::нет секрета RELEASES_TOKEN — выпуск не опубликован в splify2/releases"; fi
+
+      - name: Клон splify2/releases
+        if: steps.releases.outputs.ok == '1'
+        uses: actions/checkout@v4
+        with:
+          repository: splify2/releases
+          token: ${{ secrets.RELEASES_TOKEN }}
+          path: splify2-releases
+
+      - name: Опубликовать в splify2/releases
+        if: steps.releases.outputs.ok == '1'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -eu
+          assets="$RUNNER_TEMP/release-assets"
+          mkdir -p "$assets"
+          cp "out/andromeda-$VERSION-all.s2p" "$assets/"
+          channel=stable
+          [ "$PRERELEASE" = true ] && channel=prerelease
+          cd splify2-releases
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          python3 scripts/publish.py --product andromeda --version "$VERSION" --channel "$channel" \
+            --name "Andromeda $VERSION" --source-tag "v$VERSION" --changelog "$RUNNER_TEMP/changes.md" \
+            --assets "$assets" --mirror "https://github.com/splify2/andromeda/releases/download/v$VERSION"

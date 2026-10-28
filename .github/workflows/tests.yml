@@ -1,0 +1,39 @@
+name: Стенды
+
+# Все стенды Andromeda (tests/run.sh): интерфейс (lint, tsc, vitest), приложение для компьютера, сборка плагина,
+# lint --official и тест совместимости SDK с хостом splify2-api, граница API, сверка копий с пакетом splify2.
+# SDK и splify2 — соседними каталогами, как их ищут стенды; ветки — переменные PLUGIN_SDK_REF и SPLIFY2_REF.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+      - name: SDK плагинов и splify2
+        env:
+          SDK_REF: ${{ vars.PLUGIN_SDK_REF || 'main' }}
+          SPLIFY2_REF: ${{ vars.SPLIFY2_REF || 'main' }}
+        run: |
+          set -eu
+          git clone -q --depth 1 --branch "$SDK_REF" https://github.com/splify2/plugin-sdk "$GITHUB_WORKSPACE/../plugin-sdk"
+          ( cd "$GITHUB_WORKSPACE/../plugin-sdk" && sh build.sh )
+          git clone -q --depth 1 --branch "$SPLIFY2_REF" https://github.com/splify2/splify2 "$GITHUB_WORKSPACE/../splify2"
+          echo "PLUGIN_SDK=$GITHUB_WORKSPACE/../plugin-sdk" >> "$GITHUB_ENV"
+          echo "SPLIFY2=$GITHUB_WORKSPACE/../splify2" >> "$GITHUB_ENV"
+      - name: Стенды
+        run: sh tests/run.sh
