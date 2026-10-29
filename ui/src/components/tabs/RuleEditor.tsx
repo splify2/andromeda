@@ -747,6 +747,35 @@ export default function RuleEditor({
                                 )}
                             </div>
                         )}
+                        {/* Торренты (ключ `torrent` правила): провайдеры VPN банят за BitTorrent. У
+                            правила в «Блок» выбирать нечего, у исключения (direct) — только «не
+                            пропускать»: напрямую оно и так. */}
+                        {!isBlock && (
+                            <div className="space-y-1.5 border-t border-border pt-3 text-xs">
+                                <div className="text-subtle">{S.ruleEditor.torrenty}</div>
+                                <Segmented<'allow' | 'direct' | 'block'>
+                                    label={S.ruleEditor.torrenty}
+                                    value={ch.torrent ?? 'allow'}
+                                    onChange={(t) => {
+                                        const next: Channel = { ...ch }
+                                        if (t === 'allow') delete next.torrent
+                                        else next.torrent = t
+                                        onChange(next)
+                                    }}
+                                    items={[
+                                        { value: 'allow', label: S.ruleEditor.torrentyKakVse },
+                                        ...(isException ? [] : [{ value: 'direct' as const, label: S.ruleEditor.torrentyNapryamuyu }]),
+                                        { value: 'block', label: S.ruleEditor.torrentyBlokirovat },
+                                    ]}
+                                />
+                                {ch.torrent === 'block' && (
+                                    <p className="text-muted-foreground">{S.ruleEditor.torrentyBlokSostoyanie}</p>
+                                )}
+                                {ch.torrent === 'direct' && !isException && (
+                                    <p className="text-muted-foreground">{S.ruleEditor.torrentyNapryamuyuSostoyanie}</p>
+                                )}
+                            </div>
+                        )}
                         {hasDomains && fakeip && !isBlock && (
                             <div className="text-xs">
                                 <FieldRow label={S.ruleEditor.portNaznacheniya}>
