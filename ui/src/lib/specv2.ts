@@ -98,7 +98,7 @@ const TOP_KEYS = ['version', 'lan', 'clients', 'lists', 'outputs', 'dns', 'rules
 const LAN_KEYS = ['devices', 'addr'] as const
 const CLIENT_KEYS = ['addr', 'mac'] as const
 const LIST_KEYS = ['srs', 'prefixes_file', 'domains_file', 'proto', 'ports', 'all'] as const
-const RULE_KEYS = ['name', 'for', 'to', 'out', 'resolve', 'dns', 'enabled', 'scope', 'family', 'on_family_unavailable'] as const
+const RULE_KEYS = ['name', 'for', 'to', 'out', 'resolve', 'dns', 'enabled', 'scope', 'family', 'on_family_unavailable', 'torrent'] as const
 const DNS_KEYS = ['mode', 'cache', 'cache_ttl', 'upstream', 'upstreams', 'other', 'bootstrap', 'traceroute_hops', 'mesh_clients'] as const
 const UPSTREAM_KEYS = ['url', 'out', 'ips', 'bootstrap', 'fragment'] as const
 const GROUP_KEYS = ['servers', 'mode'] as const
@@ -401,6 +401,10 @@ function decodeV2(d: J): Spec {
         if (fam === '4' || fam === '6') ch.family = fam
         const ofu = str(r.on_family_unavailable)
         if (ofu === 'fallback' || ofu === 'block') ch.on_family_unavailable = ofu
+        /* Торренты: `block`/`direct`; `allow` — умолчание, ключа нет; иное — чужое, в extra. */
+        const tor = r.torrent
+        if (tor === 'block' || tor === 'direct') ch.torrent = tor
+        else if (tor !== undefined && tor !== 'allow') (ch.extra ??= {}).torrent = tor
         const dns = decodeUpstream(r.dns)
         if (dns) ch.dns = dns
         const toNames = arr(r.to)
@@ -900,6 +904,7 @@ export function encodeSpec(spec: Spec): J {
                 r.family = ch.family
                 if (ch.family === '6' && ch.on_family_unavailable === 'block') r.on_family_unavailable = 'block'
             }
+            if (ch.torrent) r.torrent = ch.torrent
             if (ch.dns) r.dns = typeof ch.dns === 'string' ? ch.dns : encodeUpstream(ch.dns)
             if (ch.enabled === false) r.enabled = false
             if (ch.scope === 'device') r.scope = 'device'

@@ -112,3 +112,69 @@ describe('редактор правила: семейство IP', () => {
         void fireEvent; void waitFor
     })
 })
+
+describe('спека: торренты правила', () => {
+    const doc = {
+        version: 2,
+        outputs: { direct: { kind: 'direct' }, wg0: { kind: 'interface', device: 'wg0' } },
+        rules: [{ name: 'all', to: 'all', out: 'wg0', torrent: 'direct' }],
+    }
+    it('torrent читается в поле правила и пишется обратно', () => {
+        const s = decodeSpec(doc)
+        expect(s.channels[0].torrent).toBe('direct')
+        expect((encodeSpec(s).rules as Record<string, unknown>[])[0].torrent).toBe('direct')
+        s.channels[0].torrent = 'block'
+        expect((encodeSpec(s).rules as Record<string, unknown>[])[0].torrent).toBe('block')
+    })
+    it('allow — умолчание: поля нет, ключа нет', () => {
+        const s = decodeSpec({ ...doc, rules: [{ ...doc.rules[0], torrent: 'allow' }] })
+        expect(s.channels[0].torrent).toBeUndefined()
+        expect('torrent' in (encodeSpec(s).rules as Record<string, unknown>[])[0]).toBe(false)
+    })
+    it('незнакомое значение не теряется', () => {
+        const s = decodeSpec({ ...doc, rules: [{ ...doc.rules[0], torrent: 'later' }] })
+        expect(s.channels[0].torrent).toBeUndefined()
+        expect((encodeSpec(s).rules as Record<string, unknown>[])[0].torrent).toBe('later')
+    })
+})
+
+describe('редактор правила: торренты', () => {
+    beforeEach(() => {
+        vi.restoreAllMocks()
+        pending.saved = null
+        vi.spyOn(rpc, 'leases').mockResolvedValue({ leases: [] } as never)
+        vi.spyOn(rpc, 'devices').mockResolvedValue({ devices: [] } as never)
+    })
+    const editor = (outputs: never, init: Channel, seen: Channel[]) => {
+        let ch = init
+        const view = () => (
+            <RuleEditor ch={ch} index={0} services={[]} local={{}} outputs={outputs} clash={null} rulesTotal={1}
+                coveredBy={[]} onChange={(c) => { seen.push(c); ch = c }} onClose={() => {}} onDelete={() => {}} />
+        )
+        const r = render(view())
+        return () => r.rerender(view())
+    }
+    it('«Напрямую» и «Блокировать» пишут torrent, «Как всё правило» снимает', async () => {
+        const seen: Channel[] = []
+        const again = editor({ wg0: { kind: 'interface', up: true } } as never,
+            { name: 'all', out: 'wg0', match: { any: true } } as Channel, seen)
+        await userEvent.click(screen.getByRole('button', { name: 'Напрямую' }))
+        expect(seen.at(-1)?.torrent).toBe('direct')
+        again()
+        expect(screen.getByText('Торренты этих устройств идут мимо VPN.')).toBeTruthy()
+        await userEvent.click(screen.getByRole('button', { name: 'Блокировать' }))
+        expect(seen.at(-1)?.torrent).toBe('block')
+        again()
+        expect(screen.getByText('Торренты этих устройств не проходят.')).toBeTruthy()
+        await userEvent.click(screen.getByRole('button', { name: 'Как всё правило' }))
+        expect(seen.at(-1)?.torrent).toBeUndefined()
+    })
+    it('у исключения (direct) «Напрямую» нет, у «Блока» выбора нет вовсе', () => {
+        editor({ direct: { kind: 'direct', up: true } } as never, { name: 'x', out: 'direct', match: { any: true } } as Channel, [])
+        expect(screen.getByRole('group', { name: 'Торренты' })).toBeTruthy()
+        expect(screen.queryByRole('button', { name: 'Напрямую' })).toBeNull()
+        document.body.innerHTML = ''
+        editor({ blk: { kind: 'block', up: true } } as never, { name: 'y', out: 'blk', match: { any: true } } as Channel, [])
+        expect(screen.queryByRole('group', { name: 'Торренты' })).toBeNull()
+    })
+})
