@@ -259,9 +259,13 @@ function buildSubs(mode: Mode, picks: SubPick[]): Built | null {
          * у него часть на узел. Несколько подписок или протоколов — пул latency из таких туннелей. */
         const parts = runs.flatMap((r) =>
             r.proto === 'hysteria2' && r.nodes.length > 1 ? r.nodes.map((n) => ({ ...r, nodes: [n] })) : [r])
-        const lat = (r: { proto: Proto; nodes: number[] }): Partial<Output> =>
-            r.proto !== 'hysteria2' && r.nodes.length !== 1 ? { pick: 'latency' } : {}
-        if (parts.length === 1) return { top: tunnel(tmp(), parts[0], lat(parts[0])), owned: [] }
+        /* `pick: latency` пишется и туннелю из одного узла: замерять там нечего, но без ключа набор
+         * читался «вручную» — выбранный режим пропадал после сохранения, а следующая отметка узла
+         * заменяла прежнюю вместо того, чтобы добавить. */
+        const lat = (r: { proto: Proto }): Partial<Output> => (r.proto !== 'hysteria2' ? { pick: 'latency' } : {})
+        /* hysteria2 одной частью (один узел или «Авто») сам режим не держит — пул latency из одной
+         * части: иначе набор читался бы «первым живым» или «вручную». */
+        if (parts.length === 1 && parts[0].proto !== 'hysteria2') return { top: tunnel(tmp(), parts[0], lat(parts[0])), owned: [] }
         const top: Output = { name: tmp(), kind: 'interface', devices: [], pick: 'latency', on_fail: 'drop' }
         const owned = parts.map((r) => tunnel(tmp(), r, { ...lat(r), part_of: top.name }))
         top.devices = owned.map((p) => p.name)
@@ -287,6 +291,12 @@ function buildOwn(mode: Mode, picks: string[]): Built | { ref: string } | null {
     if (mode === 'manual' || picks.length === 1) {
         const p = picks[0]
         if (p.startsWith('out:')) return { ref: p.slice(4) }
+        /* Одно устройство при «самом быстром» — пул из одного устройства с `pick: latency`: режим
+         * переживает сохранение, и второе устройство встаёт в тот же пул. */
+        if (mode === 'latency') {
+            const d = p.slice(4)
+            return { top: { name: tmp(), kind: 'interface', devices: [d], device: d, pick: 'latency', on_fail: 'drop' }, owned: [] }
+        }
         return { top: { name: tmp(), kind: 'interface', device: p.slice(4), on_fail: 'drop' }, owned: [] }
     }
     if ((mode === 'order' || mode === 'latency') && devs.length === picks.length) {
@@ -441,6 +451,21 @@ export function sharedWith(spec: Spec, index: number): string[] {
     const out = spec.channels[index]?.out
     if (!out || spec.outputs[out]?.kind === 'direct') return []
     return spec.channels.filter((c, k) => k !== index && c.out === out).map((c) => c.name)
+}
+
+/** Даёт ли выбор `t` ровно выход `out` спеки. Один и тот же набор записывается и при разных
+ *  режимах (один узел — что «вручную», что «первый живой»; свой туннель-выход одной пилюлей), и
+ *  чтение спеки обратно (`targetOf`) возвращает лишь один из них. Блок «Куда» по этой проверке
+ *  оставляет режим, который выбрал человек, вместо того чтобы перескочить на прочитанный. */
+export function targetFits(spec: Spec, out: string, t: Target): boolean {
+    if (t.direct || t.block) return false
+    const built = buildTarget(t)
+    if (!built) return false
+    if ('ref' in built) return built.ref === out
+    if (!spec.outputs[out]) return false
+    const draft: Record<string, Output> = { ...spec.outputs, [built.top.name]: built.top }
+    for (const p of built.owned) draft[p.name] = p
+    return shape(draft, built.top.name) === shape(spec.outputs, out)
 }
 
 /** Поставить правилу `index` выбор `t`. Пустой выбор (ни пилюли, не «напрямую») спеку не меняет —

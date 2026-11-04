@@ -15,7 +15,7 @@ import { plainName } from '@/lib/nodename'
 import { devList, isPart, isTunnelKind, type Output, type Spec } from '@/lib/model'
 import { type Live } from '@/lib/live'
 import { useSubNodes, type SubNode } from '@/lib/subnodes'
-import { applyTarget, EMPTY_TARGET, outputTree, sharedWith, subPickKey, targetOf, type Mode, type SubPick, type Target } from '@/lib/ruleout'
+import { applyTarget, EMPTY_TARGET, outputTree, sharedWith, subPickKey, targetFits, targetOf, type Mode, type SubPick, type Target } from '@/lib/ruleout'
 import { S } from '@/copy'
 import { PluginGuard, SlotView } from '@/plugins/boundary'
 import { registry, useRegistry } from '@/plugins/registry'
@@ -52,8 +52,13 @@ export default function RuleTarget({ spec, index, live, onSpec }: {
     const ch = spec.channels[index]
     const parsed = useMemo(() => targetOf(spec, ch.out), [spec, ch.out])
     const [t, setT] = useState<Target>(() => parsed ?? structuredClone(EMPTY_TARGET))
-    /* Выход сменился не отсюда (отмена, перечитывание после применения) — выбор по нему. */
-    useEffect(() => { if (parsed) setT(parsed) }, [parsed])
+    /* Выход сменился не отсюда (отмена, перечитывание после применения) — выбор по нему. Выход тот
+     * же, что даёт текущий выбор, — выбор остаётся: иначе режим перескакивал на прочитанный из спеки
+     * («Самый быстрый» с одним узлом читается «вручную»), и следующая отметка узла заменяла прежнюю. */
+    useEffect(() => {
+        if (parsed) setT((cur) => (targetFits(spec, ch.out, cur) ? cur : parsed))
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [parsed])
 
     const [subs, setSubs] = useState<Sub[]>(() => subsRemembered() ?? [])
     /* Устройства — сразу из памяти (lib/cache.ts): пилюли своих туннелей не ждут опроса. */
