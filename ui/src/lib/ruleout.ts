@@ -1,4 +1,4 @@
-import { DIRECT, isPart, isTunnelKind, type Output, type ProxyKind, type Spec } from '@/lib/model'
+import { DIRECT, devList, ipv6Of, isPart, isTunnelKind, poolIpv6, type Ipv6Mode, type Output, type ProxyKind, type Spec } from '@/lib/model'
 import { outputUsers } from '@/lib/outrefs'
 import { directDomains } from '@/lib/rulefiles'
 import { pruneDnsPresets } from '@/lib/dnspresets'
@@ -291,12 +291,6 @@ function buildOwn(mode: Mode, picks: string[]): Built | { ref: string } | null {
     if (mode === 'manual' || picks.length === 1) {
         const p = picks[0]
         if (p.startsWith('out:')) return { ref: p.slice(4) }
-        /* Одно устройство при «самом быстром» — пул из одного устройства с `pick: latency`: режим
-         * переживает сохранение, и второе устройство встаёт в тот же пул. */
-        if (mode === 'latency') {
-            const d = p.slice(4)
-            return { top: { name: tmp(), kind: 'interface', devices: [d], device: d, pick: 'latency', on_fail: 'drop' }, owned: [] }
-        }
         return { top: { name: tmp(), kind: 'interface', device: p.slice(4), on_fail: 'drop' }, owned: [] }
     }
     if ((mode === 'order' || mode === 'latency') && devs.length === picks.length) {
@@ -316,13 +310,37 @@ function buildOwn(mode: Mode, picks: string[]): Built | { ref: string } | null {
     return { top, owned }
 }
 
+/** IPv6 своих устройств набора — как уже записано у этих устройств в спеке (`ipv6`, у `routed` — и
+ *  `prefix`). Это настройка устройства, а не правила: без неё смена режима или пилюль в «Куда»
+ *  пересобирала выход без ключа, и у выхода пропадало, например, `ipv6: off` — диагностика тут же
+ *  требовала masq6 у зоны выхода. Служебные части пула по подписке (имена-заготовки) не трогаются. */
+function withDeviceIpv6(b: Built | { ref: string } | null, outs: Record<string, Output>): Built | { ref: string } | null {
+    if (!b || 'ref' in b) return b
+    const known = new Map<string, { ipv6?: Ipv6Mode; prefix?: string }>()
+    for (const o of Object.values(outs)) {
+        if (o.kind !== 'interface' && o.kind !== 'awg') continue
+        for (const d of devList(o)) {
+            const v6 = ipv6Of(o, d)
+            if (v6 && !known.has(d)) known.set(d, { ipv6: v6, ...(v6 === 'routed' && o.prefix ? { prefix: o.prefix } : {}) })
+        }
+    }
+    for (const o of [b.top, ...b.owned]) {
+        if (o.kind !== 'interface') continue
+        const ds = devList(o).filter((d) => !d.startsWith('\u0000'))
+        if (!ds.length || ds.length !== devList(o).length) continue
+        if (ds.length === 1) Object.assign(o, known.get(ds[0]) || {})
+        else Object.assign(o, poolIpv6(ds, (d) => known.get(d)?.ipv6))
+    }
+    return b
+}
+
 /** Набор правила целиком. `ref` — правило ведёт прямо в готовый выход. */
-function buildTarget(t: Target): Built | { ref: string } | null {
+function buildTarget(t: Target, outs: Record<string, Output> = {}): Built | { ref: string } | null {
     const secs: (Built | { ref: string })[] = []
     const s = withCountries(buildSubs(t.subs.mode, t.subs.picks), t.subs)
     if (s) secs.push(s)
     for (const w of t.warp) secs.push({ ref: w })
-    const o = buildOwn(t.own.mode, t.own.picks)
+    const o = withDeviceIpv6(buildOwn(t.own.mode, t.own.picks), outs)
     if (o) secs.push(o)
     if (!secs.length) return null
     if (secs.length === 1) return secs[0]
@@ -459,7 +477,7 @@ export function sharedWith(spec: Spec, index: number): string[] {
  *  оставляет режим, который выбрал человек, вместо того чтобы перескочить на прочитанный. */
 export function targetFits(spec: Spec, out: string, t: Target): boolean {
     if (t.direct || t.block) return false
-    const built = buildTarget(t)
+    const built = buildTarget(t, spec.outputs)
     if (!built) return false
     if ('ref' in built) return built.ref === out
     if (!spec.outputs[out]) return false
@@ -492,7 +510,7 @@ export function applyTarget(spec: Spec, index: number, t: Target): Spec {
         /* Напрямую — домены настоящими адресами (rulefiles.directDomains). */
         return { ...s2, channels: s2.channels.map((c, k) => (k === index ? directDomains(c) : c)) }
     }
-    const built = buildTarget(t)
+    const built = buildTarget(t, spec.outputs)
     if (!built) return spec
     if ('ref' in built) return setOut(spec, built.ref)
 

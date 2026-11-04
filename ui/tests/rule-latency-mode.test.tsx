@@ -75,10 +75,25 @@ describe('«Самый быстрый» из одной части пережи�
         expect(t.subs).toMatchObject({ mode: 'latency', picks: [{ sub: SUB, proto: 'hysteria2' }] })
     })
 
-    it('одно своё устройство — пул из одного устройства с pick: latency', () => {
-        const { s, t } = roundtrip(one({ own: { mode: 'latency', picks: ['dev:wg0'] } }))
-        expect(s.outputs.a).toMatchObject({ kind: 'interface', devices: ['wg0'], pick: 'latency' })
-        expect(t.own).toEqual({ mode: 'latency', picks: ['dev:wg0'] })
+    it('одно своё устройство — обычный выход-интерфейс: пула из одного устройства не заводится', () => {
+        const s = applyTarget(base(), 0, one({ own: { mode: 'latency', picks: ['dev:wg0'] } }))
+        expect(s.outputs.a).toMatchObject({ kind: 'interface', device: 'wg0' })
+        expect(s.outputs.a.pick).toBeUndefined()
+        expect(Object.keys(encodeSpec(s).outputs as object)).not.toContain('a.wg0')
+    })
+
+    it('«Самый быстрый» на своём выходе wg0 с ipv6: off выход не трогает', () => {
+        const sp = { ...base('wg0'), outputs: { ...base().outputs, wg0: { name: 'wg0', kind: 'interface', device: 'wg0', ipv6: 'off', on_fail: 'drop' } } } as Spec
+        const s = applyTarget(sp, 0, one({ own: { mode: 'latency', picks: ['dev:wg0'] } }))
+        expect(s.outputs.wg0).toEqual(sp.outputs.wg0)
+        expect(s.channels[0].out).toBe('wg0')
+    })
+
+    it('новое устройство в наборе берёт ipv6 устройства из спеки', () => {
+        const sp = { ...base('wg0'), outputs: { ...base().outputs, wg0: { name: 'wg0', kind: 'interface', device: 'wg0', ipv6: 'off', on_fail: 'drop' }, wg1: { name: 'wg1', kind: 'interface', device: 'wg1', ipv6: 'off', on_fail: 'drop' } } } as Spec
+        const s = applyTarget(sp, 0, one({ own: { mode: 'latency', picks: ['dev:wg0', 'dev:wg1'] } }))
+        const o = s.outputs[s.channels[0].out]
+        expect(o).toMatchObject({ kind: 'interface', devices: ['wg0', 'wg1'], pick: 'latency', ipv6: 'off' })
     })
 
     it('«Вручную» и «Первый живой» из одной части пишутся как прежде', () => {
