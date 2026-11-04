@@ -1,4 +1,4 @@
-import { DIRECT, isPart, isTunnelKind, type Output, type ProxyKind, type Spec } from '@/lib/model'
+import { DIRECT, devList, ipv6Of, isPart, isTunnelKind, poolIpv6, type Ipv6Mode, type Output, type ProxyKind, type Spec } from '@/lib/model'
 import { outputUsers } from '@/lib/outrefs'
 import { directDomains } from '@/lib/rulefiles'
 import { pruneDnsPresets } from '@/lib/dnspresets'
@@ -259,9 +259,13 @@ function buildSubs(mode: Mode, picks: SubPick[]): Built | null {
          * у него часть на узел. Несколько подписок или протоколов — пул latency из таких туннелей. */
         const parts = runs.flatMap((r) =>
             r.proto === 'hysteria2' && r.nodes.length > 1 ? r.nodes.map((n) => ({ ...r, nodes: [n] })) : [r])
-        const lat = (r: { proto: Proto; nodes: number[] }): Partial<Output> =>
-            r.proto !== 'hysteria2' && r.nodes.length !== 1 ? { pick: 'latency' } : {}
-        if (parts.length === 1) return { top: tunnel(tmp(), parts[0], lat(parts[0])), owned: [] }
+        /* `pick: latency` пишется и туннелю из одного узла: замерять там нечего, но без ключа набор
+         * читался «вручную» — выбранный режим пропадал после сохранения, а следующая отметка узла
+         * заменяла прежнюю вместо того, чтобы добавить. */
+        const lat = (r: { proto: Proto }): Partial<Output> => (r.proto !== 'hysteria2' ? { pick: 'latency' } : {})
+        /* hysteria2 одной частью (один узел или «Авто») сам режим не держит — пул latency из одной
+         * части: иначе набор читался бы «первым живым» или «вручную». */
+        if (parts.length === 1 && parts[0].proto !== 'hysteria2') return { top: tunnel(tmp(), parts[0], lat(parts[0])), owned: [] }
         const top: Output = { name: tmp(), kind: 'interface', devices: [], pick: 'latency', on_fail: 'drop' }
         const owned = parts.map((r) => tunnel(tmp(), r, { ...lat(r), part_of: top.name }))
         top.devices = owned.map((p) => p.name)
@@ -306,13 +310,37 @@ function buildOwn(mode: Mode, picks: string[]): Built | { ref: string } | null {
     return { top, owned }
 }
 
+/** IPv6 своих устройств набора — как уже записано у этих устройств в спеке (`ipv6`, у `routed` — и
+ *  `prefix`). Это настройка устройства, а не правила: без неё смена режима или пилюль в «Куда»
+ *  пересобирала выход без ключа, и у выхода пропадало, например, `ipv6: off` — диагностика тут же
+ *  требовала masq6 у зоны выхода. Служебные части пула по подписке (имена-заготовки) не трогаются. */
+function withDeviceIpv6(b: Built | { ref: string } | null, outs: Record<string, Output>): Built | { ref: string } | null {
+    if (!b || 'ref' in b) return b
+    const known = new Map<string, { ipv6?: Ipv6Mode; prefix?: string }>()
+    for (const o of Object.values(outs)) {
+        if (o.kind !== 'interface' && o.kind !== 'awg') continue
+        for (const d of devList(o)) {
+            const v6 = ipv6Of(o, d)
+            if (v6 && !known.has(d)) known.set(d, { ipv6: v6, ...(v6 === 'routed' && o.prefix ? { prefix: o.prefix } : {}) })
+        }
+    }
+    for (const o of [b.top, ...b.owned]) {
+        if (o.kind !== 'interface') continue
+        const ds = devList(o).filter((d) => !d.startsWith('\u0000'))
+        if (!ds.length || ds.length !== devList(o).length) continue
+        if (ds.length === 1) Object.assign(o, known.get(ds[0]) || {})
+        else Object.assign(o, poolIpv6(ds, (d) => known.get(d)?.ipv6))
+    }
+    return b
+}
+
 /** Набор правила целиком. `ref` — правило ведёт прямо в готовый выход. */
-function buildTarget(t: Target): Built | { ref: string } | null {
+function buildTarget(t: Target, outs: Record<string, Output> = {}): Built | { ref: string } | null {
     const secs: (Built | { ref: string })[] = []
     const s = withCountries(buildSubs(t.subs.mode, t.subs.picks), t.subs)
     if (s) secs.push(s)
     for (const w of t.warp) secs.push({ ref: w })
-    const o = buildOwn(t.own.mode, t.own.picks)
+    const o = withDeviceIpv6(buildOwn(t.own.mode, t.own.picks), outs)
     if (o) secs.push(o)
     if (!secs.length) return null
     if (secs.length === 1) return secs[0]
@@ -443,6 +471,21 @@ export function sharedWith(spec: Spec, index: number): string[] {
     return spec.channels.filter((c, k) => k !== index && c.out === out).map((c) => c.name)
 }
 
+/** Даёт ли выбор `t` ровно выход `out` спеки. Один и тот же набор записывается и при разных
+ *  режимах (один узел — что «вручную», что «первый живой»; свой туннель-выход одной пилюлей), и
+ *  чтение спеки обратно (`targetOf`) возвращает лишь один из них. Блок «Куда» по этой проверке
+ *  оставляет режим, который выбрал человек, вместо того чтобы перескочить на прочитанный. */
+export function targetFits(spec: Spec, out: string, t: Target): boolean {
+    if (t.direct || t.block) return false
+    const built = buildTarget(t, spec.outputs)
+    if (!built) return false
+    if ('ref' in built) return built.ref === out
+    if (!spec.outputs[out]) return false
+    const draft: Record<string, Output> = { ...spec.outputs, [built.top.name]: built.top }
+    for (const p of built.owned) draft[p.name] = p
+    return shape(draft, built.top.name) === shape(spec.outputs, out)
+}
+
 /** Поставить правилу `index` выбор `t`. Пустой выбор (ни пилюли, не «напрямую») спеку не меняет —
  *  правилу нужен выход. */
 export function applyTarget(spec: Spec, index: number, t: Target): Spec {
@@ -467,7 +510,7 @@ export function applyTarget(spec: Spec, index: number, t: Target): Spec {
         /* Напрямую — домены настоящими адресами (rulefiles.directDomains). */
         return { ...s2, channels: s2.channels.map((c, k) => (k === index ? directDomains(c) : c)) }
     }
-    const built = buildTarget(t)
+    const built = buildTarget(t, spec.outputs)
     if (!built) return spec
     if ('ref' in built) return setOut(spec, built.ref)
 
