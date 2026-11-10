@@ -1,6 +1,10 @@
 import { pending } from '@/lib/pending'
 
-/** Автоприменение: сохранённое уходит на роутер само, кнопки «Применить» нет.
+/** Автоприменение СО СТРАНИЦЫ — запасной путь: сохранённое уходит на роутер само, кнопки «Применить» нет.
+ *
+ *  Обычно записанное применяет сам роутер (плагин autoapply; lib/pending.ts, `backend` и follow), и
+ *  тогда этот модуль молчит. Он работает, когда плагина на роутере нет, он старый или выключен в
+ *  настройках, — иначе настройки остались бы записанными и не применёнными.
  *
  *  Правка записывается автосохранением (lib/pending.ts), а применяется через 0,8 с тишины после
  *  записи — подряд идущие правки уходят ОДНИМ применением. Сохранённое и не применённое ДО
@@ -25,13 +29,16 @@ export function startAutoApply(): () => void {
     let seen = -1
     let t: ReturnType<typeof setTimeout> | null = null
     const idle = () => !pending.held && !pending.hasUnsaved() && !pending.applying
+    /* Применяет роутер (true) или ещё не известно, кто (null) — страница не применяет. */
+    const mine = () => pending.backend === false
     const run = () => {
         t = null
-        if (!idle()) return
+        if (!mine() || !idle()) return
         seen = pending.editSeq
         if (pending.count() > 0) void pending.apply()
     }
     const check = () => {
+        if (!mine()) return
         if (!pending.saved || pending.held) return
         if (seen === -1) {
             /* Первый показ: записанное и не применённое до открытия применяется сразу. */

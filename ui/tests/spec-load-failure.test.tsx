@@ -80,6 +80,7 @@ describe('отказ загрузки спеки — не пустая наст�
         get.mockResolvedValue(REAL)
         fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
         await waitFor(() => expect(screen.queryByText('Настройки не загрузились')).toBeNull())
-        expect(pending.saved?.channels[0].name).toBe('Видео')
+        /* Экран отказа уходит сразу по нажатию, спека встаёт следом — когда роутер ответил на все вопросы загрузки. */
+        await waitFor(() => expect(pending.saved?.channels[0].name).toBe('Видео'))
     })
 })

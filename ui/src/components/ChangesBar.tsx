@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Undo2 } from 'lucide-react'
+import { Loader2, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { pending, usePending } from '@/lib/pending'
 import { changeText, type Change } from '@/lib/specdiff'
@@ -12,6 +12,9 @@ import { S } from '@/copy'
  *  это «Что изменится»: строки раскрыты, у каждой «Отменить», внизу «Отменить всё». После удавшегося
  *  применения — «Применено: N изменений» со сворачиваемым списком «Что изменилось»: человек видит,
  *  что именно ушло на роутер, и может отменить любую строку, не помня, что менял.
+ *
+ *  Пока роутер применяет записанное (pending.applying), сверху стоит «Применение…»: правки на экране уже
+ *  видны, а эта строка говорит, что роутер ещё в работе. Она уходит сама, сменяясь «Применено: N».
  *
  *  Отмена — обычная правка поверх текущей спеки (pending.revert): записывается и применяется сама, и
  *  отмена одной строки не откатывает соседние. Нет изменений — нет и полосы. */
@@ -39,7 +42,16 @@ export default function ChangesBar() {
     const mode: 'waiting' | 'applied' | null = waiting.length > 0 && stuck && !pending.applying
         ? 'waiting'
         : la && la.changes.length > 0 && (open || Date.now() - la.at < SHOW_MS) ? 'applied' : null
-    if (!mode) return null
+    if (!mode) {
+        if (!pending.applying) return null
+        return (
+            <section role="status" aria-live="polite" aria-label={S.changes.primenenie}
+                     className="mb-3 flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm shadow-card">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" aria-hidden="true" />
+                <span className="font-medium">{S.changes.primenenie}</span>
+            </section>
+        )
+    }
 
     const list: Change[] = mode === 'waiting' ? waiting : la!.changes
     const expanded = mode === 'waiting' || open
