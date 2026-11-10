@@ -66,6 +66,8 @@ export default function SetupWizard({ onDone, railHost }: {
     const [tun, setTun] = useState<{ name: string; r: AwgPut } | null>(null)
     /** Бэкенд умеет принять файл туннеля (awg_*); старше — остаются только туннели роутера. */
     const [awgOk, setAwgOk] = useState(false)
+    /** Имена файлов уже добавленных туннелей: новый под тем же именем заменил бы ключи прежнего. */
+    const [awgNames, setAwgNames] = useState<string[]>([])
     const [picked, setPicked] = useState<string[]>([])
     const [q, setQ] = useState('')
     const [dns, setDns] = useState('')
@@ -94,7 +96,7 @@ export default function SetupWizard({ onDone, railHost }: {
             .catch(() => rpc.allowDomains().then((a) => setServices(wantedFirst(toAllowDomainsServices(a)))).catch(() => setServices([])))
         rpc.localLists().then((d) => setLocal(d.files || {})).catch(() => setLocal({}))
         rpc.devices().then((d) => setDevices((d.devices || []).filter((x) => x.owner !== 'steer'))).catch(() => setDevices([]))
-        awgRpc.list().then((r) => setAwgOk(!!r.ok)).catch(() => setAwgOk(false))
+        awgRpc.list().then((r) => { setAwgOk(!!r.ok); setAwgNames((r.tunnels || []).map((t) => t.name)) }).catch(() => setAwgOk(false))
     }, [])
     const all = useMemo(() => [...services, ...customServices(local)], [services, local])
     const shown = all.filter((sv) => {
@@ -294,7 +296,7 @@ export default function SetupWizard({ onDone, railHost }: {
                                 </div>
                             ) : (
                                 <TunnelImport
-                                    taken={Object.entries(spec?.outputs || {}).filter(([, o]) => o.kind !== 'awg').map(([n]) => n)}
+                                    taken={[...Object.entries(spec?.outputs || {}).filter(([, o]) => o.kind !== 'awg').map(([n]) => n), ...awgNames]}
                                     onAdded={(name, r) => { setTun({ name, r }); setDev('') }}
                                 />
                             ))}

@@ -199,6 +199,33 @@ describe('Свои туннели: добавленные', () => {
         expect((edit.mock.calls[0][0] as Spec).outputs.nl).toEqual({ name: 'nl', kind: 'awg', on_fail: 'drop', ipv6: 'nat' })
     })
 
+    it('файл без выхода, а плагин awg сняли: сначала ставится плагин, потом выход', async () => {
+        const edit = boot(EMPTY, [file()])
+        vi.mocked(awgRpc.list).mockResolvedValue({ ok: true, plugin_ready: false, dir: '/etc/steer/awg', tunnels: [file()] })
+        const inst = vi.spyOn(rpc, 'pluginInstall').mockResolvedValue({ ok: true, job: '9' })
+        vi.spyOn(rpc, 'pluginJob').mockResolvedValue({ ok: true, state: 'done' } as never)
+        vi.spyOn(rpc, 'pluginsList').mockRejectedValue(new Error('нет'))
+        render(<IfacesPanel live={live()} />)
+        await screen.findByText('WireGuard · сервер 203.0.113.7:51820 · не используется')
+        fireEvent.click(screen.getByRole('switch', { name: 'nl' }))
+        expect(edit).not.toHaveBeenCalled()
+        await waitFor(() => expect(edit).toHaveBeenCalled(), { timeout: 5000 })
+        expect(inst).toHaveBeenCalledWith('awg', undefined)
+        expect((edit.mock.calls[0][0] as Spec).outputs.nl.kind).toBe('awg')
+    })
+
+    it('имя файла уже добавленного туннеля занято — до вызова бэкенда, ключи прежнего не заменяются', async () => {
+        boot(EMPTY, [file(), file({ name: 'tunnel', conf: '/etc/steer/awg/tunnel.conf' })])
+        const p = vi.spyOn(awgRpc, 'put')
+        render(<IfacesPanel live={live()} />)
+        await screen.findAllByText('WireGuard · сервер 203.0.113.7:51820 · не используется')
+        await fill('nl')
+        await waitFor(() => expect(said()).toEqual([['Имя nl занято', 'warning']]))
+        expect(p).not.toHaveBeenCalled()
+        /* Имя по умолчанию — свободное, а не имя уже добавленного. */
+        expect((screen.getByLabelText('Имя') as HTMLInputElement).placeholder).toBe('tunnel2')
+    })
+
     it('удаление файла — вызовом бэкенда; его отказ («ещё работает») показан словами', async () => {
         boot(EMPTY, [file()])
         const del = vi.spyOn(awgRpc, 'del')
@@ -251,6 +278,18 @@ describe('Мастер первой настройки: свой туннель 
         /* Правило ведёт в выход туннеля. */
         expect(next.channels).toHaveLength(1)
         expect(next.channels[0].out).toBe('nl')
+    })
+
+    it('мастер: имя файла уже добавленного туннеля занято — ключи прежнего не заменяются', async () => {
+        wizard(EMPTY, [file()])
+        const p = vi.spyOn(awgRpc, 'put')
+        fireEvent.click(await screen.findByRole('button', { name: 'Начать' }))
+        const own = await screen.findByRole('button', { name: /Свой туннель/ })
+        await waitFor(() => expect(own).not.toBeDisabled())
+        fireEvent.click(own)
+        await fill('nl')
+        await waitFor(() => expect(said()).toEqual([['Имя nl занято', 'warning']]))
+        expect(p).not.toHaveBeenCalled()
     })
 
     it('туннель роутера по-прежнему можно выбрать, и он не смешивается с добавленным', async () => {

@@ -8,6 +8,7 @@ import { outputBusy } from '@/lib/outrefs'
 import { awgRpc, rpc, type AwgTunnel } from '@/lib/rpc'
 import { pending } from '@/lib/pending'
 import { withTunnel } from '@/lib/awg'
+import { pluginActions } from '@/plugins/store'
 import TunnelImport from '@/components/TunnelImport'
 import { useSpecCopy } from '@/lib/speccopy'
 import { type Output, type Spec } from '@/lib/model'
@@ -61,7 +62,13 @@ export default function IfacesPanel({ live }: { live: Live }) {
 
     /** Файлы добавленных туннелей; `null` — бэкенд старше методов awg_*: ввода туннеля нет. */
     const [files, setFiles] = useState<AwgTunnel[] | null>(null)
-    const loadFiles = () => awgRpc.list().then((r) => setFiles(r.ok ? r.tunnels || [] : null)).catch(() => setFiles(null))
+    /** Плагин вида awg стоит (ответ awg_list). Без него ядро выход не примет — см. tunnelOn. */
+    const [awgReady, setAwgReady] = useState(true)
+    /** Туннель включается и ждёт установки плагина: переключатель занят, второй щелчок не ставит его дважды. */
+    const [turning, setTurning] = useState('')
+    const loadFiles = () => awgRpc.list()
+        .then((r) => { setFiles(r.ok ? r.tunnels || [] : null); setAwgReady(r.plugin_ready !== false) })
+        .catch(() => setFiles(null))
 
     useEffect(() => {
         rpc.devices().then((d) => setDevices(d.devices || [])).catch(() => setDevices([]))
@@ -152,6 +159,27 @@ export default function IfacesPanel({ live }: { live: Live }) {
         edit({ ...spec!, outputs })
     }
 
+    /** Включить добавленный туннель обратно — выходом в черновик. Плагин awg ставится ДО этого,
+     *  когда его нет (его сняли, пока туннель был выключен): без плагина ядро вида не знает, и
+     *  сохранение спеки с таким выходом кончилось бы отказом. Так же, как при добавлении файла. */
+    async function tunnelOn(name: string, f?: AwgTunnel) {
+        if (!awgReady) {
+            setTurning(name)
+            try {
+                await pluginActions.install('awg')
+                setAwgReady(true)
+            } catch (e) {
+                notify(S.tunnelImport.modulNeVstal(e instanceof Error ? e.message : String(e)), 'error')
+                return
+            } finally {
+                setTurning('')
+            }
+        }
+        /* Спека — нынешний черновик, а не снимок этого отрисовывания: пока ставился плагин (десятки
+         * секунд), человек мог поправить что-то ещё, и выход ложится поверх его правки, а не вместо. */
+        edit(withTunnel(pending.saved ?? spec!, name, f))
+    }
+
     async function tunnelDelete(name: string) {
         try {
             const r = await awgRpc.del(name)
@@ -169,8 +197,14 @@ export default function IfacesPanel({ live }: { live: Live }) {
      * файл только что принят, перечень ещё не перечитан, либо его положили мимо панели). */
     const awgOuts = Object.entries(spec.outputs).filter(([, o]) => o.kind === 'awg').map(([n]) => n)
     const tunnels = files === null ? [] : [...new Set([...files.map((f) => f.name), ...awgOuts])].sort()
-    /* Имя нового туннеля не должно совпасть с выходом другого вида. */
-    const taken = Object.entries(spec.outputs).filter(([, o]) => o.kind !== 'awg').map(([n]) => n)
+    /* Имя нового туннеля не должно совпасть ни с выходом другого вида, ни с файлом уже добавленного
+     * туннеля: замена файла по тому же имени — это замена ключей рабочего туннеля, а не добавление
+     * нового (бэкенд без `replace` отвечает на неё отказом). Выход awg без файла имя не занимает:
+     * добавить ему файл — ровно то, чего ему не хватает. */
+    const taken = [
+        ...Object.entries(spec.outputs).filter(([, o]) => o.kind !== 'awg').map(([n]) => n),
+        ...(files || []).map((f) => f.name),
+    ]
 
     return (
         <div className="space-y-4">
@@ -214,7 +248,8 @@ export default function IfacesPanel({ live }: { live: Live }) {
                                     {S.ifacesPanel.udalit}
                                 </Button>
                             )}
-                            <Switch on={on} label={name} onClick={() => (on ? tunnelOff(name) : edit(withTunnel(spec!, name, f)))} />
+                            <Switch on={on} label={name} disabled={turning === name}
+                                onClick={() => (on ? tunnelOff(name) : void tunnelOn(name, f))} />
                         </div>
                     )
                 })}
@@ -281,7 +316,7 @@ export default function IfacesPanel({ live }: { live: Live }) {
         {files !== null && (
             <Group>
                 <div className="py-3">
-                    <TunnelImport taken={taken} onAdded={(name, r) => { edit(withTunnel(spec!, name, r)); void loadFiles() }} />
+                    <TunnelImport taken={taken} onAdded={(name, r) => { edit(withTunnel(pending.saved ?? spec!, name, r)); void loadFiles() }} />
                 </div>
             </Group>
         )}
