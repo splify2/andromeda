@@ -970,6 +970,7 @@
  "listDialogs.udalitSpisok": "Удалить список «{0}»?",
  "listDialogs.udalitSpisokTelo": "Список удалится с роутера. Если его использует правило, удаление не пройдёт.",
  "listDialogs.udalit": "Удалить",
+ "subsBoard.kazhdyeMin": "каждые {0} мин",
  "subsBoard.podpiski": "Подписки",
  "subsBoard.proveritZaderzhku": "Проверить задержку",
  "subsBoard.udalitPodpisku": "Удалить подписку «{0}»?",

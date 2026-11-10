@@ -970,6 +970,7 @@
  "listDialogs.udalitSpisok": "Delete list “{0}”?",
  "listDialogs.udalitSpisokTelo": "The list will be deleted from the router. If a rule uses it, deletion will fail.",
  "listDialogs.udalit": "Delete",
+ "subsBoard.kazhdyeMin": "every {0} min",
  "subsBoard.podpiski": "Subscriptions",
  "subsBoard.proveritZaderzhku": "Check latency",
  "subsBoard.udalitPodpisku": "Delete subscription “{0}”?",

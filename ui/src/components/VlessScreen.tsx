@@ -13,6 +13,7 @@ import { pending } from '@/lib/pending'
 import { makeSubOutput } from '@/lib/suboutput'
 
 import { S } from '@/copy'
+import { AUTO_CHOICES } from '@/lib/subauto'
 /** «Подписки» (прежде «VLESS»): откуда берутся узлы — VLESS, hysteria2 и прокси steer-proxy.
  *
  *  ПОДПИСОК НЕСКОЛЬКО. Их и правда бывает несколько — у человека две панели, — и раньше это
@@ -48,24 +49,6 @@ interface Sub {
     /** Когда роутер пытался обновить её в последний раз, секунды epoch. */
     auto_at?: number
 }
-
-/** Интервалы автообновления. Крайние — те же, что принимает бэкенд: полчаса и трое суток.
- *
- *  Списком, а не полем для числа: человек выбирает «как часто», а не «сколько минут», и
- *  свободное число здесь означало бы ещё и разбор ошибок ввода ради значения, которых
- *  осмысленных десяток. */
-const AUTO_CHOICES: { min: number; label: string }[] = [
-    { min: 0, label: S.vlessScreen.vruchnuyu },
-    { min: 30, label: S.vlessScreen.kazhdye30Minut },
-    { min: 60, label: S.vlessScreen.kazhdyyChas },
-    { min: 120, label: S.vlessScreen.kazhdye2Chasa },
-    { min: 180, label: S.vlessScreen.kazhdye3Chasa },
-    { min: 360, label: S.vlessScreen.kazhdye6Chasov },
-    { min: 720, label: S.vlessScreen.kazhdye12Chasov },
-    { min: 1440, label: S.vlessScreen.razVSutki },
-    { min: 2880, label: S.vlessScreen.razVDvoeSutok },
-    { min: 4320, label: S.vlessScreen.razVTroeSutok },
-]
 
 /** Сколько осталось до следующего обновления. Роутер смотрит расписание раз в десять минут,
  *  поэтому «через 3 минуты» здесь честнее округлить вверх, чем обещать точную минуту. */

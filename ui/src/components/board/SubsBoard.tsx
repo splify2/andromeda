@@ -7,11 +7,17 @@ import { rpc } from '@/lib/rpc'
 import { notify } from '@/lib/notify'
 import { subsRemember, subsRemembered } from '@/lib/subs'
 import { isSubSource } from '@/lib/validate'
+import { AUTO_CHOICES } from '@/lib/subauto'
 import { S } from '@/copy'
 
-/** Ссылки подписок на экране VPN: добавить, обновить, удалить. Какие конфигурации брать и как между
- *  ними выбирать — в правиле, в блоке «Куда»; остаток, срок, автообновление и узлы — в подпункте
- *  «Узлы и автообновление» того же экрана. Блок один и в LuCI, и в приложении для компьютера. */
+/** Ссылки подписок на экране VPN: добавить, обновить, удалить и выбрать, как часто роутер обновляет
+ *  подписку сам. Какие конфигурации брать и как между ними выбирать — в правиле, в блоке «Куда»;
+ *  остаток, срок и узлы — в подпункте «Узлы и автообновление» того же экрана. Блок один и в LuCI, и в
+ *  приложении для компьютера.
+ *
+ *  ВЫБОР ПЕРИОДА — ЗДЕСЬ, В СТРОКЕ ПОДПИСКИ. Он жил только в подпункте, и с доски, где подписку
+ *  заводят и обновляют, его не было видно: владелец счёл, что выбор пропал. Тот же выбор в подпункте
+ *  остался — оба пишут одно и то же (`sub_auto`). */
 
 type Sub = Awaited<ReturnType<typeof rpc.subList>>['subs'][number]
 
@@ -82,6 +88,21 @@ function SubRow({ sub, onChanged }: { sub: Sub; onChanged: () => void }) {
         }
     }
 
+    /* Как часто роутер обновляет подписку сам. Пределы проверяет бэкенд; отказ — словами бэкенда. */
+    const auto = sub.auto || 0
+    async function setAuto(minutes: number) {
+        setBusy('auto')
+        try {
+            const r = await rpc.subAuto(sub.name, minutes)
+            if (!r.ok) notify(r.error || S.vlessScreen.neVyshloZadatObnovlenie, 'error')
+            onChanged()
+        } catch (e) {
+            notify(String(e instanceof Error ? e.message : e), 'error')
+        } finally {
+            setBusy('')
+        }
+    }
+
     async function remove() {
         const ok = await ask({ title: S.subsBoard.udalitPodpisku(sub.title || sub.name), body: S.subsBoard.udalitPodpiskuTelo, confirmLabel: S.vlessScreen.udalit2 })
         if (!ok) return
@@ -98,7 +119,7 @@ function SubRow({ sub, onChanged }: { sub: Sub; onChanged: () => void }) {
     }
 
     return (
-        <div className="sp-board-tile an-glass flex items-center gap-3 rounded-2xl border px-4 py-3">
+        <div className="sp-board-tile an-glass flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3">
             <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold">{sub.title || sub.name}</div>
@@ -106,6 +127,23 @@ function SubRow({ sub, onChanged }: { sub: Sub; onChanged: () => void }) {
                     {[sourceOf(sub), sub.present ? '' : S.vlessScreen.neSkachana].filter(Boolean).join(' · ')}
                 </div>
             </div>
+            {/* Обновление по часам есть только у подписки по ссылке: вставленные руками ссылки обновлять неоткуда. */}
+            {sub.kind === 'url' && (
+                <select
+                    aria-label={S.vlessScreen.obnovlyat}
+                    title={S.vlessScreen.obnovlyat}
+                    value={String(auto)}
+                    disabled={!!busy}
+                    onChange={(e) => void setAuto(Number(e.currentTarget.value))}
+                    className="h-9 max-w-[12rem] rounded-lg border border-border bg-background px-2 text-sm disabled:opacity-60"
+                >
+                    {AUTO_CHOICES.map((c) => (
+                        <option key={c.min} value={String(c.min)}>{c.label}</option>
+                    ))}
+                    {/* Интервал, заданный мимо страницы (ssh), которого нет в списке, показывается как есть. */}
+                    {!AUTO_CHOICES.some((c) => c.min === auto) && <option value={String(auto)}>{S.subsBoard.kazhdyeMin(auto)}</option>}
+                </select>
+            )}
             {sub.url && (
                 <Button variant="outline" size="sm" onClick={refresh} disabled={!!busy} aria-label={S.vlessScreen.obnovit} title={S.vlessScreen.obnovit}>
                     {busy === 'refresh' ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}

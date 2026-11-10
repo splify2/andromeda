@@ -1164,6 +1164,8 @@ export const ru = {
         udalit: "Удалить",
     },
     subsBoard: {
+        /** Интервал автообновления, которого нет среди готовых вариантов. */
+        kazhdyeMin: (n: number) => `каждые ${n} мин`,
         podpiski: "Подписки",
         proveritZaderzhku: "Проверить задержку",
         udalitPodpisku: (p0: unknown) => `Удалить подписку «${p0}»?`,
