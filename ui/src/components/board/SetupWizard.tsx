@@ -4,7 +4,9 @@ import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { inputCls } from '@/components/formbits'
 import ListPills from '@/components/board/ListPills'
-import { rpc } from '@/lib/rpc'
+import { awgRpc, rpc, type AwgPut } from '@/lib/rpc'
+import { withTunnel } from '@/lib/awg'
+import TunnelImport from '@/components/TunnelImport'
 import { notify } from '@/lib/notify'
 import { pending, usePending } from '@/lib/pending'
 import { customServices, toAllowDomainsServices, toCatalog, wantedFirst, type Channel, type ServiceEntry, type Spec } from '@/lib/model'
@@ -60,6 +62,10 @@ export default function SetupWizard({ onDone, railHost }: {
     const [via, setVia] = useState<Via | null>(null)
     const [url, setUrl] = useState('')
     const [dev, setDev] = useState('')
+    /** Свой туннель, добавленный здесь же файлом или текстом: имя и ответ бэкенда (из него — выход). */
+    const [tun, setTun] = useState<{ name: string; r: AwgPut } | null>(null)
+    /** Бэкенд умеет принять файл туннеля (awg_*); старше — остаются только туннели роутера. */
+    const [awgOk, setAwgOk] = useState(false)
     const [picked, setPicked] = useState<string[]>([])
     const [q, setQ] = useState('')
     const [dns, setDns] = useState('')
@@ -88,6 +94,7 @@ export default function SetupWizard({ onDone, railHost }: {
             .catch(() => rpc.allowDomains().then((a) => setServices(wantedFirst(toAllowDomainsServices(a)))).catch(() => setServices([])))
         rpc.localLists().then((d) => setLocal(d.files || {})).catch(() => setLocal({}))
         rpc.devices().then((d) => setDevices((d.devices || []).filter((x) => x.owner !== 'steer'))).catch(() => setDevices([]))
+        awgRpc.list().then((r) => setAwgOk(!!r.ok)).catch(() => setAwgOk(false))
     }, [])
     const all = useMemo(() => [...services, ...customServices(local)], [services, local])
     const shown = all.filter((sv) => {
@@ -140,6 +147,11 @@ export default function SetupWizard({ onDone, railHost }: {
             } else if (plugVias.some((r) => plugKey(r) === via) && plugOuts.length) {
                 /* Выходы плагин уже завёл в черновике панели (spec): правило ведёт в них. */
                 t.warp = plugOuts
+            } else if (via === 'own' && tun) {
+                /* Туннель, добавленный файлом: его выход кладётся в спеку здесь, вместе с правилом, —
+                 * файл уже на роутере, а устройство ядро заведёт при применении. */
+                sp = withTunnel(sp, tun.name, tun.r)
+                t.own = { mode: 'manual', picks: [`out:${tun.name}`] }
             } else if (via === 'own' && dev) {
                 t.own = { mode: 'manual', picks: [`dev:${dev}`] }
             }
@@ -179,7 +191,7 @@ export default function SetupWizard({ onDone, railHost }: {
         }
     }
 
-    const canNext = step === 1 ? (via === 'sub' ? !!url.trim() : via === 'own' ? !!dev : plugOuts.length > 0)
+    const canNext = step === 1 ? (via === 'sub' ? !!url.trim() : via === 'own' ? !!dev || !!tun : plugOuts.length > 0)
         : step === 2 ? picked.length > 0 : true
     const titles = [S.setup.zagolovok, S.setup.cherezChto, S.setup.chtoPustit, S.setup.kakSprashivat, S.setup.vseGotovo]
 
@@ -243,7 +255,7 @@ export default function SetupWizard({ onDone, railHost }: {
                                             onClick={() => { setPlugOuts([]); setVia(plugKey(r)) }} />
                                     )
                                 })}
-                                <Choice on={via === 'own'} icon={<Network className="h-5 w-5" />} title={S.setup.svoyTunnel} note={devices.length ? S.setup.svoyNote : S.setup.svoyNet} off={!devices.length} onClick={() => setVia('own')} />
+                                <Choice on={via === 'own'} icon={<Network className="h-5 w-5" />} title={S.setup.svoyTunnel} note={awgOk ? S.setup.svoyFayl : devices.length ? S.setup.svoyNote : S.setup.svoyNet} off={!devices.length && !awgOk} onClick={() => setVia('own')} />
                             </div>
                             {via === 'sub' && (
                                 <textarea
@@ -261,15 +273,31 @@ export default function SetupWizard({ onDone, railHost }: {
                                 </PluginGuard>
                             ))}
                             {via === 'own' && devices.length > 0 && (
-                                <div className="flex flex-wrap gap-2">
-                                    {devices.map((d) => (
-                                        <button key={d.name} type="button" onClick={() => setDev(d.name)}
-                                            className={`rounded-xl border px-3 py-1.5 text-sm ${dev === d.name ? 'border-primary/80 bg-primary/10 text-foreground' : 'bg-transparent text-muted-foreground hover:border-primary/50'}`}>
-                                            {d.name}
-                                        </button>
-                                    ))}
+                                <div className="space-y-1.5">
+                                    {awgOk && <div className="text-xs text-muted-foreground">{S.setup.tunneliRoutera}</div>}
+                                    <div className="flex flex-wrap gap-2">
+                                        {devices.map((d) => (
+                                            <button key={d.name} type="button" aria-pressed={dev === d.name && !tun} onClick={() => { setDev(d.name); setTun(null) }}
+                                                className={`rounded-xl border px-3 py-1.5 text-sm ${dev === d.name && !tun ? 'border-primary/80 bg-primary/10 text-foreground' : 'bg-transparent text-muted-foreground hover:border-primary/50'}`}>
+                                                {d.name}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
+                            {/* Туннеля на роутере нет или нужен другой: файл или текст — устройство заведёт ядро. */}
+                            {via === 'own' && awgOk && (tun ? (
+                                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-primary/80 bg-primary/10 px-3 py-2 text-sm">
+                                    <Check className="h-4 w-4 text-primary" aria-hidden="true" />
+                                    <span role="status" className="min-w-0 flex-1">{S.setup.tunnelGotov(tun.name)}</span>
+                                    <Button variant="ghost" size="sm" onClick={() => setTun(null)}>{S.setup.drugoyTunnel}</Button>
+                                </div>
+                            ) : (
+                                <TunnelImport
+                                    taken={Object.entries(spec?.outputs || {}).filter(([, o]) => o.kind !== 'awg').map(([n]) => n)}
+                                    onAdded={(name, r) => { setTun({ name, r }); setDev('') }}
+                                />
+                            ))}
                         </>
                     )}
 
@@ -308,7 +336,7 @@ export default function SetupWizard({ onDone, railHost }: {
 
                     {step === 4 && (
                         <div className="space-y-2 text-sm">
-                            <Row k={S.setup.cherezChto} v={via === 'sub' ? S.setup.podpiska : via === 'own' ? dev : plugVias.find((r) => plugKey(r) === via)?.value.label ?? ''} />
+                            <Row k={S.setup.cherezChto} v={via === 'sub' ? S.setup.podpiska : via === 'own' ? tun?.name ?? dev : plugVias.find((r) => plugKey(r) === via)?.value.label ?? ''} />
                             <Row k={S.setup.chtoPustit} v={all.filter((sv) => picked.includes(sv.id)).map((sv) => sv.name).join(', ')} />
                             <Row k="DNS" v={dns ? PRESET_TITLE.get(dns) ?? dns : S.dns.dnsProvaydera} />
                             <p className="pt-1 text-xs text-muted-foreground">{S.setup.potomMozhno}</p>

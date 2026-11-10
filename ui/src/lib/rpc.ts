@@ -239,6 +239,52 @@ export interface DnsLog {
     other?: { name: string; pause: number; ok: number; failed: number; fallback: number } | null
 }
 
+/* ---- свои туннели файлом или текстом (выход kind: awg) -------------------------------------
+ *
+ * Отдельным блоком, а не полями `rpc`: методы появились в splify2-api 1.3 (awg_list, awg_put,
+ * awg_del), и панель на бэкенде старше них обязана работать — вызывающий проверяет отказ
+ * `awgRpc.list()` и прячет ввод туннеля, а не показывает кнопку, которая не сработает.
+ *
+ * Ключей в ответах нет: бэкенд не возвращает содержимое файла ни одним методом. */
+
+/** Файл туннеля на роутере. `outputs` — выходы сохранённой спеки, которые его читают. */
+export interface AwgTunnel {
+    name: string
+    conf: string
+    endpoint: string
+    addresses: string[]
+    /** Файлу нужен модуль AmneziaWG (обфускация задана); иначе хватит WireGuard. */
+    amnezia: boolean
+    ipv6: 'nat' | 'off'
+    outputs: string[]
+}
+
+/** Ответ `awg_put`. `output` — готовый выход для спеки: его кладёт в черновик панель, а не бэкенд
+ *  (у спеки ревизия и несохранённые правки). `plugin_ready: false` — плагин `plugin` надо поставить
+ *  до записи спеки, иначе ядро отвергнет выход. `checked: false` — файл принят по форме, ядро его
+ *  ещё не проверяло (плагина нет). */
+export interface AwgPut {
+    ok: boolean
+    error?: string
+    code?: string
+    name?: string
+    conf?: string
+    endpoint?: string
+    addresses?: string[]
+    amnezia?: boolean
+    ipv6?: 'nat' | 'off'
+    checked?: boolean
+    plugin?: string
+    plugin_ready?: boolean
+    output?: { kind: 'awg'; on_fail: 'drop'; ipv6: 'nat' | 'off' }
+}
+
+export const awgRpc = {
+    list: declare<{ ok: boolean; error?: string; plugin_ready?: boolean; dir?: string; tunnels?: AwgTunnel[] }>('awg_list'),
+    put: declare<AwgPut>('awg_put', ['name', 'text']),
+    del: declare<{ ok: boolean; error?: string; code?: string; name?: string }>('awg_del', ['name']),
+}
+
 export const rpc = {
     /** The spec as stored. The UI edits a copy and writes it back whole: a partial
      *  update would need the backend to understand channel ordering, and ordering is
@@ -475,11 +521,11 @@ export const rpc = {
     xsteerLink: declare<{ ok: boolean; link?: string; conf?: string; error?: string }>(
         'xsteer_link', ['iface', 'link']),
 
-    /** Принять ссылку: записать её в настройку СУЩЕСТВУЮЩЕГО интерфейса xsteer и поднять его
-     *  заново. Интерфейс не создаёт — у интерфейса есть то, чего в ссылке нет и быть не может
-     *  (зона фаервола, имя устройства), и созданный без зоны туннель выглядел бы настроенным и
-     *  не вёз бы трафик. */
-    xsteerLinkPut: declare<{ ok: boolean; iface?: string; hub?: string; error?: string }>(
+    /** Принять ссылку: записать её в настройку интерфейса xsteer и поднять его заново. Интерфейса
+     *  с таким именем нет — бэкенд заводит его сам (`created`): всё, что интерфейсу нужно, лежит
+     *  в ссылке, а зону фаервола его устройству ставит apply, когда оно взято в выход. Бэкенд
+     *  старше этого отвечает отказом «интерфейс не xsteer» — его слова и показываются. */
+    xsteerLinkPut: declare<{ ok: boolean; iface?: string; hub?: string; device?: string; created?: boolean; error?: string }>(
         'xsteer_link_put', ['iface', 'link']),
 
     /** Обратный вопрос к `devices`: не куда выпустить трафик, а откуда приходят клиенты
