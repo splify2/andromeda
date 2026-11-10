@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "andromeda",
-  "version": "26.11.1",
+  "version": "26.11.0",
   "type": "plugin",
   "name": "Andromeda",
   "description": "The splify2 panel: rules, outputs, subscriptions, DNS, requests and diagnostics on one page",
