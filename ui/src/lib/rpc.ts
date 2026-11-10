@@ -127,6 +127,16 @@ declare global {
  *
  *  Мост, однажды полученный, запоминается: `rpc.declare` у LuCI не бесплатный, а методов
  *  под сорок. */
+/** Ответ autoapply_status. `state` — одно слово о применении на роутере: `applying` — применяет,
+ *  `pending` — ждёт паузу после правки, `rejected` — ядро отвергло эти настройки, `unapplied` — записано
+ *  и не применено (и никто этим не занят), `idle` — всё применено. */
+export interface AutoApplyStatus {
+    ok: boolean
+    enabled?: boolean
+    state?: 'idle' | 'pending' | 'applying' | 'rejected' | 'unapplied'
+    last?: { ok: boolean; at: number; source: string; message: string }
+}
+
 function declare<T>(method: string, params: string[] = []) {
     let call: ((...a: unknown[]) => Promise<unknown>) | null = null
     return (...args: unknown[]): Promise<T> => {
@@ -316,6 +326,15 @@ export const rpc = {
     /** Compile and install. Separate from spec_set so the UI can save a draft
      *  without steering traffic differently the same second. */
     apply: declare<{ ok: boolean; output?: string }>('apply'),
+
+    /** Применение на роутере (плагин autoapply): записанное применяет сам роутер, а страница только
+     *  смотрит на состояние. Плагина нет или он старый — метод отказывает либо в ответе нет `state`,
+     *  и тогда применяет страница, как прежде (lib/pending.ts, `backend`). */
+    autoapplyStatus: declare<AutoApplyStatus>('autoapply_status'),
+    /** Применить записанное сейчас, не дожидаясь исхода: ответ сразу, исход — в autoapplyStatus. */
+    autoapplyKick: declare<{ ok: boolean; scheduled?: boolean }>('autoapply_kick'),
+    /** Снять ожидающее применение (пачка правок ещё не закончена). */
+    autoapplyCancel: declare<{ ok: boolean; cancelled?: boolean }>('autoapply_cancel'),
 
     /** "Where would this go?" — answered by the engine against the LIVE kernel, so
      *  it also covers the case where a set failed to load. */

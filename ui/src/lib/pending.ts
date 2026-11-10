@@ -13,7 +13,11 @@ import { S } from '@/copy'
 /** Автосохранение и счётчик неприменённого — одно место на весь экран.
  *
  *  Правка уходит в spec_set сама, через полсекунды тишины: кнопок «Сохранить» и «Применить»
- *  нет. Записанное применяет lib/autoapply.ts (через 0,8 с тишины после записи), а count() —
+ *  нет. ЗАПИСАННОЕ ПРИМЕНЯЕТ РОУТЕР (плагин autoapply, `backend`): страница видна человеку сразу со
+ *  всеми правками, сверху висит «Применение», пока роутер занят, а после — сверка с тем, что на нём
+ *  лежит (follow). Страница для этого не нужна: закрыли вкладку — применится всё равно. Роутер без
+ *  плагина (или плагин выключен) — применяет страница, как прежде: lib/autoapply.ts, через 0,8 с
+ *  тишины после записи. count() —
  *  сколько правил и выходов ОТЛИЧАЕТСЯ от применённого: по нему решается, есть ли что применять.
  *  Не счётчик кликов: изменил и вернул обратно — ноль.
  *
@@ -129,6 +133,12 @@ class PendingStore {
      *  переписали (вторая вкладка, ssh, подписка), и страница сливает правки (reconcile), а не затирает
      *  чужое. Нет — бэкенд ревизий не отдаёт, пишем без сверки, как прежде. */
     private rev: string | undefined
+    /** Кто применяет записанное: `true` — роутер сам (плагин autoapply включён и умеет называть
+     *  состояние), `false` — страница (lib/autoapply.ts), `null` — ещё не спрошено. Спрашивается при
+     *  загрузке спеки; пока не известно, страница не применяет — иначе применили бы оба. */
+    backend: boolean | null = null
+    /** В режиме `backend` — «роутер занят применением» (ждёт паузу или применяет), пока страница за
+     *  этим следит; иначе — идёт вызов apply со страницы. */
     applying = false
     /** Закрывается, когда применение кончилось (любым исходом). Записи, пришедшие за время
      *  применения, ждут его — см. flush. */
@@ -206,7 +216,14 @@ class PendingStore {
             done = true
             this.holds--
             this.emit()
+            this.releaseBackend()
         }
+    }
+
+    /** Конец пачки в режиме `backend`: роутер ждал (после каждой записи пачки его ожидающее
+     *  применение снималось), теперь применяет накопленное одним применением. */
+    private releaseBackend() {
+        if (this.backend && this.holds === 0 && this.saved) void this.apply()
     }
 
     /** Пачка: hold на время fn, отпускание — даже при исключении. */
@@ -218,6 +235,8 @@ class PendingStore {
     /** Есть то, что на роутер ещё не легло: идёт применение, правка не записана, или записанное
      *  отличается от применённого (ждёт автоприменения либо оно не удалось). */
     unfinished(): boolean {
+        /* Применяет роутер — странице достаточно дописать: записанное он применит и без неё. */
+        if (this.backend) return this.hasUnsaved()
         return this.applying || this.hasUnsaved() || this.applyFailed || this.count() > 0
     }
 
@@ -282,7 +301,12 @@ class PendingStore {
         }
         /* Снимка применённого нет (ещё ни разу не применяли) — считаем применённым сохранённое:
          * счётчик стартует с нуля. */
-        const applied = await rpc.appliedGet().catch(() => null)
+        const [applied, auto] = await Promise.all([
+            rpc.appliedGet().catch(() => null),
+            Promise.resolve().then(() => rpc.autoapplyStatus()).catch(() => null),
+        ])
+        /* Роутер применяет сам, если плагин включён и называет состояние (`state` — с версии 1.1). */
+        this.backend = !!(auto && auto.ok && auto.enabled && typeof auto.state === 'string')
         if (!this.saved) {
             /* Спека прежнего формата (v1) переписывается в v2 сразу, без участия человека:
              * движок 2.0 v1 больше не читает. Смысл правил не меняется, поэтому счётчик
@@ -297,6 +321,9 @@ class PendingStore {
             this.loadFailed = false
             this.emit()
             if (migrate && !(await this.coreTooOld())) this.edit(this.saved)
+            /* Записанное и не применённое до открытия (правили в другом окне, роутер перезагрузили в
+             * паузе) или применение, идущее прямо сейчас: показываем «Применение» и доводим до конца. */
+            else if (this.backend && auto && auto.state !== 'idle' && auto.state !== 'rejected') void this.follow()
         }
         return this.saved as Spec
     }
@@ -422,7 +449,10 @@ class PendingStore {
          * исполняет. Правка за это время остаётся в памяти (dirty) и уезжает после ответа, поверх
          * перечитанной спеки (apply → refresh). Спека к записи берётся ПОСЛЕ ожидания: не та, что
          * была в момент вызова, а слитая с роутерной. */
-        while (this.applying && !force) await this.applyDone
+        /* РОУТЕР ПРИМЕНЯЕТ САМ — ЖДАТЬ НЕЗАЧЕМ: запись и применение на нём идут под одним замком (правка
+         * не попадёт в середину применения), а переписанную им спеку ловит ревизия (conflict → reconcile).
+         * Правка, сделанная во время применения, уезжает сразу и применяется следом. */
+        while (this.applying && !force && !this.backend) await this.applyDone
         /* Писать нечего — но запись, начатая раньше, может ещё лететь: dirty снимается в НАЧАЛЕ
          * записи. Ждём её, иначе apply() шёл в rpc.apply, пока spec_set на роутере ещё
          * проверял спеку, и зона фаервола приводилась к прежней спеке (tests/apply-waits-save). */
@@ -452,6 +482,12 @@ class PendingStore {
                 /* Что теперь на роутере — опора слияния после применения. Только при удаче: отказ
                  * ничего там не поменял. */
                 if (r.ok) { this.written = spec; this.saveError = null; this.rev = r.rev || undefined }
+                /* Записано — дальше дело роутера: он применит сам, страница показывает «Применение» и
+                 * следит. Пачка в работе — применение на роутере придерживается до её конца. */
+                if (r.ok && this.backend) {
+                    if (this.held) void Promise.resolve().then(() => rpc.autoapplyCancel()).catch(() => {})
+                    else void this.follow()
+                }
                 if (!r.ok) {
                     /* Отказ dry-run — это не «потеряно»: спека осталась в памяти, человек
                      * видит причину и правит дальше; следующая правка попробует снова.
@@ -555,7 +591,102 @@ class PendingStore {
         return this.applying || Date.now() - this.appliedAt < SETTLE_MS
     }
 
+    /** СЛЕДИТЬ ЗА ПРИМЕНЕНИЕМ НА РОУТЕРЕ (режим `backend`).
+     *
+     *  Страница ничего не применяет: после записи роутер сам ждёт короткую паузу и применяет, а здесь
+     *  — только опрос его состояния (autoapply_status), пока он занят. На это время `applying` стоит:
+     *  сверху «Применение», опрос состояния ядра судит мягко (settling). Кончилось — сверка с роутером
+     *  (refresh: что лежит на нём и что он считает применённым), строки «Что изменилось» и, при
+     *  отказе, причина.
+     *
+     *  «Записано, не применено, и никто не занят» — не сразу отказ: так выглядит мгновение между
+     *  записью и постановкой применения, поэтому состояние должно повториться, затем роутер получает
+     *  прямую просьбу (autoapply_kick: применить сейчас), и только если не помогла и она — отказ.
+     *
+     *  Новая запись, пока слежение идёт, второго опроса не заводит: цикл увидит новое ожидание сам, а
+     *  если он как раз кончился — пойдёт ещё один круг (`followAgain`). */
+    private following = false
+    private followAgain = false
+    private async follow() {
+        if (this.following) { this.followAgain = true; return }
+        this.following = true
+        this.followAgain = false
+        const appliedBefore = this.applied
+        let release!: () => void
+        this.applyDone = new Promise<void>((r) => { release = r })
+        this.applying = true
+        this.emit()
+        let ok = false
+        let why = ''
+        try {
+            let orphan = 0
+            let kicked = false
+            let silent = 0
+            const until = Date.now() + FOLLOW_MAX_MS
+            for (;;) {
+                const st = await Promise.resolve().then(() => rpc.autoapplyStatus()).catch(() => null)
+                if (!st || !st.ok || typeof st.state !== 'string') {
+                    /* Роутер молчит: применение (перезапуск правил, сети) может ненадолго занять его
+                     * целиком. Несколько кругов подряд — отказ слежения, не применения. */
+                    if (++silent > FOLLOW_SILENT) { why = S.pending.routerNeOtvechaet; break }
+                } else {
+                    silent = 0
+                    if (!st.enabled) { this.backend = false; break }
+                    if (st.state === 'idle') { ok = true; break }
+                    if (st.state === 'rejected') { why = applyText(st.last?.message); break }
+                    if (st.state === 'unapplied') {
+                        if (++orphan >= 2) {
+                            if (kicked) { why = st.last && !st.last.ok ? applyText(st.last.message) : ''; break }
+                            kicked = true
+                            orphan = 0
+                            await Promise.resolve().then(() => rpc.autoapplyKick()).catch(() => null)
+                        }
+                    } else orphan = 0
+                }
+                if (Date.now() > until) { why = S.pending.routerNeOtvechaet; break }
+                await new Promise((r) => setTimeout(r, FOLLOW_POLL_MS))
+            }
+            /* Плагин выключили посреди дела — дальше применяет страница (lib/autoapply.ts увидит сам). */
+            if (this.backend === false) return
+            this.applyFailed = !ok
+            await this.refresh(this.written, ok)
+            if (ok) {
+                const now = this.applied
+                const changes = appliedBefore && now ? describeChanges(asWritten(appliedBefore), asWritten(now)) : []
+                /* Круг без изменений (повторное слежение, чужое применение той же спеки) не стирает
+                 * строки прошлого применения и не вспыхивает галочкой. */
+                if (changes.length) {
+                    this.lastApplied = { at: Date.now(), changes }
+                    this.justApplied = true
+                    setTimeout(() => { this.justApplied = false; this.emit() }, 1800)
+                }
+            } else notify(S.pending.neprimeneno(why || S.pending.sboyPrimeneniya), 'error')
+        } catch (e) {
+            this.applyFailed = true
+            notify(S.pending.neprimeneno(String(e instanceof Error ? e.message : e)), 'error')
+        } finally {
+            this.applying = false
+            this.following = false
+            this.appliedAt = Date.now()
+            release()
+            this.emit()
+            if (this.followAgain && this.backend) void this.follow()
+        }
+    }
+
     async apply() {
+        /* Применяет роутер: дописать несохранённое, попросить применить сейчас и следить. */
+        if (this.backend) {
+            await this.flush(true, true)
+            if (this.saveError !== null) {
+                this.applyFailed = true
+                notify(S.pending.nastroykiNeZapisany(this.saveError), 'error')
+                return
+            }
+            await Promise.resolve().then(() => rpc.autoapplyKick()).catch(() => null)
+            void this.follow()
+            return
+        }
         if (this.applying) return
         this.applying = true
         let release!: () => void
@@ -695,6 +826,14 @@ export function setLoadRetry(ms: number[]) { LOAD_RETRY_MS = ms }
 
 /** Хвост применения: сколько после ответа apply ответы опроса считаются переходными. */
 const SETTLE_MS = 15000
+
+/** Слежение за применением на роутере: шаг опроса, сколько кругов молчания роутера терпим и сколько
+ *  ждём всего. Шаг — полсекунды: само применение на роутере занимает одну-две секунды, и «Применение»
+ *  должно уйти с экрана сразу за ним. Меняется только в стенде. */
+let FOLLOW_POLL_MS = 500
+const FOLLOW_SILENT = 10
+const FOLLOW_MAX_MS = 180000
+export function setFollowPoll(ms: number) { FOLLOW_POLL_MS = ms }
 
 export const pending = new PendingStore()
 
