@@ -152,10 +152,49 @@ describe('панель xsteer', () => {
         expect(await screen.findByText('неизвестный параметр snii')).toBeInTheDocument()
     })
 
-    it('интерфейсов нет — сказано, что туннель создаётся в настройках сети', async () => {
+    // Туннель добавляется ссылкой прямо здесь: интерфейс с протоколом xsteer заводит бэкенд, и
+    // в настройки сети роутера человека не отправляют — ни текстом, ни ссылкой на страницу LuCI.
+    it('интерфейсов нет — туннель добавляется ссылкой, без настроек сети роутера', async () => {
+        h.xsteerLinkPut.mockResolvedValue({ ok: true, iface: 'xs1', hub: '198.51.100.9:8443', device: 'xs-xs1', created: true })
         mount({})
+        const container = document.body
         expect(await screen.findByText('Интерфейсов xsteer нет')).toBeInTheDocument()
-        expect(screen.getByText(/Создать в настройках сети/)).toBeInTheDocument()
+        expect(container.textContent).not.toMatch(/настройках сети/)
+        expect(container.querySelector('a[href*="admin/network"]')).toBeNull()
+        expect(screen.getByRole('button', { name: 'Добавить' })).toBeDisabled()
+        await userEvent.type(screen.getByLabelText('Ссылка xs://'), 'xs://k@198.51.100.9:8443?pk=p&ip=10.77.0.5/24')
+        await userEvent.click(screen.getByRole('button', { name: 'Добавить' }))
+        /* Имя не набрано — берётся свободное: устройство xs-xs1 влезает в 15 знаков. */
+        await waitFor(() => expect(h.xsteerLinkPut).toHaveBeenCalledWith({ iface: 'xs1', link: 'xs://k@198.51.100.9:8443?pk=p&ip=10.77.0.5/24' }))
+        expect(await screen.findByText('Туннель xs1 добавлен: хаб 198.51.100.9:8443. Включается в «Своих туннелях».')).toBeInTheDocument()
+        expect((screen.getByLabelText('Ссылка xs://') as HTMLTextAreaElement).value).toBe('')
+    })
+
+    it('имя нового туннеля: занятое и негодное отвергаются до вызова роутера', async () => {
+        h.xsteerLinkPut.mockClear()
+        mount({ home: { device: 'xs-home', age: 1, state: STATE } })
+        await screen.findByText('Показать ссылку xs://')
+        /* Ссылки на страницу сети нет и у существующего туннеля: настройка меняется заменой ссылки. */
+        expect(document.querySelector('a[href*="admin/network"]')).toBeNull()
+        await userEvent.type(screen.getByLabelText('Ссылка xs://'), 'xs://k@1.2.3.4:443')
+        await userEvent.type(screen.getByLabelText('Имя'), 'home')
+        await userEvent.click(screen.getByRole('button', { name: 'Добавить' }))
+        expect(await screen.findByText('Имя home занято')).toBeInTheDocument()
+        await userEvent.clear(screen.getByLabelText('Имя'))
+        await userEvent.type(screen.getByLabelText('Имя'), 'слишком-длинное-имя')
+        await userEvent.click(screen.getByRole('button', { name: 'Добавить' }))
+        expect(await screen.findByText('Имя: буквы, цифры и _, до 12 знаков')).toBeInTheDocument()
+        expect(h.xsteerLinkPut).not.toHaveBeenCalled()
+    })
+
+    it('отказ роутера при добавлении — его словами', async () => {
+        h.xsteerLinkPut.mockResolvedValue({ ok: false, error: 'интерфейс lan не xsteer' })
+        mount({})
+        await screen.findByText('Интерфейсов xsteer нет')
+        await userEvent.type(screen.getByLabelText('Имя'), 'lan')
+        await userEvent.type(screen.getByLabelText('Ссылка xs://'), 'xs://k@1.2.3.4:443')
+        await userEvent.click(screen.getByRole('button', { name: 'Добавить' }))
+        expect(await screen.findByText('интерфейс lan не xsteer')).toBeInTheDocument()
     })
 })
 

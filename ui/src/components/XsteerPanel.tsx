@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, Copy, ExternalLink, Link2, RefreshCw } from 'lucide-react'
+import { Check, Copy, Link2, Plus, RefreshCw } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Block, CardHead, KV } from '@/components/ui/layout'
@@ -230,6 +230,8 @@ export default function XsteerPanel({ live }: { live: Live }) {
     const [busy, setBusy] = useState<string | null>(null)
     const [dead, setDead] = useState(false)
     const [note, setNote] = useState<Record<string, { text: string; bad: boolean }>>({})
+    /** Новый туннель: имя интерфейса и ссылка xs://. Интерфейс заводит бэкенд (xsteer_link_put). */
+    const [add, setAdd] = useState({ name: '', link: '' })
 
     /* Отказ вызова и «туннелей нет» РАЗДЕЛЕНЫ, и это не мелочь: rpcd постарее интерфейса метода
      * не знает вовсе, и показать в этом случае «интерфейсов xsteer нет» значило бы соврать про
@@ -292,6 +294,70 @@ export default function XsteerPanel({ live }: { live: Live }) {
         }
     }
 
+    /** Свободное имя нового интерфейса: xs1, xs2 … — устройство выйдет «xs-xs1», в 15 знаков влезает. */
+    const freeName = () => {
+        for (let n = 1; ; n++) if (!tunnels?.[`xs${n}`]) return `xs${n}`
+    }
+
+    /** Добавить туннель ссылкой: интерфейс с протоколом xsteer заводит бэкенд — в настройки сети
+     *  роутера идти незачем, всё нужное интерфейсу лежит в ссылке. Включается он, как любой свой
+     *  туннель, в «Своих туннелях». */
+    async function addTunnel() {
+        const name = add.name.trim() || freeName()
+        const v = add.link.trim()
+        if (!v) return
+        if (!/^[A-Za-z0-9_]{1,12}$/.test(name)) { setNote((p) => ({ ...p, '': { text: S.xsteerPanel.nuzhnoImya, bad: true } })); return }
+        if (tunnels?.[name]) { setNote((p) => ({ ...p, '': { text: S.xsteerPanel.imyaZanyato(name), bad: true } })); return }
+        setBusy('')
+        try {
+            const r = await rpc.xsteerLinkPut({ iface: name, link: v })
+            if (r.ok) {
+                setAdd({ name: '', link: '' })
+                setNote((p) => ({ ...p, '': { text: S.xsteerPanel.dobavlen(name, r.hub), bad: false } }))
+                reload()
+                live.refresh()
+            } else {
+                setNote((p) => ({ ...p, '': { text: r.error || S.xsteerPanel.ssylkaNePrinyata, bad: true } }))
+            }
+        } catch {
+            setNote((p) => ({ ...p, '': { text: S.xsteerPanel.routerNeOtvetil, bad: true } }))
+        } finally {
+            setBusy(null)
+        }
+    }
+
+    /* Форма нового туннеля — одна и та же при пустом перечне и под карточками туннелей. */
+    const addForm = (
+        <div className="space-y-2">
+            <p className="text-sm text-subtle">{S.xsteerPanel.dobavitPodskazka}</p>
+            <div className="flex flex-wrap items-center gap-2">
+                <label htmlFor="xs-add-name" className="text-xs text-muted-foreground">{S.xsteerPanel.imya}</label>
+                <input
+                    id="xs-add-name"
+                    className="h-[34px] w-32 rounded-sm border bg-background px-2 font-mono text-xs"
+                    value={add.name}
+                    placeholder={freeName()}
+                    spellCheck={false}
+                    onChange={(e) => setAdd((a) => ({ ...a, name: e.currentTarget.value }))}
+                />
+            </div>
+            <textarea
+                aria-label={S.xsteerPanel.ssylkaXs}
+                className="w-full rounded-sm border bg-background px-2 py-1 font-mono text-[11px]"
+                rows={3}
+                placeholder={S.xsteerPanel.ssylkaXs}
+                value={add.link}
+                spellCheck={false}
+                onChange={(e) => setAdd((a) => ({ ...a, link: e.currentTarget.value }))}
+            />
+            <Button size="sm" disabled={busy === '' || !add.link.trim()} onClick={() => void addTunnel()}>
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="ml-1.5">{S.xsteerPanel.dobavit}</span>
+            </Button>
+            {note[''] && <p className={`text-[13px] ${note[''].bad ? 'text-destructive' : 'text-success'}`}>{note[''].text}</p>}
+        </div>
+    )
+
     function copy(iface: string, value: string) {
         navigator.clipboard?.writeText(value).then(
             () => {
@@ -317,16 +383,7 @@ export default function XsteerPanel({ live }: { live: Live }) {
         return (
             <Block>
                 <CardHead title={S.xsteerPanel.interfeysovXsteerNet} />
-                <div className="space-y-2">
-                    <p className="text-sm text-subtle">
-                        {S.xsteerPanel.tunnelSozdaetsyaKakObychnyy}<code>xs://</code> {S.xsteerPanel.mozhnoVstavitPryamoNa}</p>
-                    <a
-                        href="/cgi-bin/luci/admin/network/network"
-                        className="inline-flex items-center gap-1.5 text-sm text-primary underline decoration-dotted"
-                    >
-                        {S.xsteerPanel.sozdatVNastroykahSeti}<ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                    </a>
-                </div>
+                {addForm}
             </Block>
         )
 
@@ -364,14 +421,6 @@ export default function XsteerPanel({ live }: { live: Live }) {
                                     <span className="truncate">{iface}</span>
                                     <span className="shrink-0 text-xs font-normal text-subtle">{t.device}</span>
                                 </span>
-                            }
-                            action={
-                            <a
-                                href="/cgi-bin/luci/admin/network/network"
-                                className="inline-flex items-center gap-1.5 text-xs text-primary underline decoration-dotted"
-                            >
-                                {S.xsteerPanel.nastroit}<ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                            </a>
                             }
                         />
                         <div className="space-y-1.5 text-[13px]">
@@ -474,6 +523,12 @@ export default function XsteerPanel({ live }: { live: Live }) {
                     </Block>
                 )
             })}
+            {/* Ещё один туннель — той же ссылкой. Настройка туннеля меняется заменой ссылки в его
+                карточке («Вставить другую ссылку»): страницы сети роутера для этого не нужно. */}
+            <Block>
+                <CardHead title={S.xsteerPanel.dobavitTunnel} />
+                {addForm}
+            </Block>
         </div>
     )
 }

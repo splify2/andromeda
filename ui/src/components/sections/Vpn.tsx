@@ -64,6 +64,9 @@ export default function Vpn({ live }: { live: Live }) {
         .filter((o) => o.kind === 'interface')
         .flatMap((o) => devList(o))
         .filter((d) => !partNames.has(d) && !coreDevs.has(d))
+    /* Туннели, добавленные файлом или текстом (выход `kind: awg`): их устройство заводит ядро, но для
+     * человека это такой же свой туннель — и в подписи он назван своим именем, а не именем устройства. */
+    const ownTunnels = [...ifaceDevs, ...outputs.filter((o) => o.kind === 'awg').map((o) => o.name)]
     const vless = outputs.filter((o) => isTunnelKind(o.kind))
     const vlessCount = vless.reduce(
         (n, o) => n + Math.max(1, o.nodes?.length || 0),
@@ -88,7 +91,7 @@ export default function Vpn({ live }: { live: Live }) {
                 <TapRow
                     icon={ShieldCheck}
                     title={S.vpn.svoiTunneli}
-                    subtitle={ifaceDevs.length ? S.vpn.vzyaty(ifaceDevs.join(', ')) : S.vpn.wireguardAmneziawgOpenvpnNi}
+                    subtitle={ownTunnels.length ? S.vpn.vzyaty(ownTunnels.join(', ')) : S.vpn.wireguardAmneziawgOpenvpnNi}
                     onClick={() => setScreen('ifaces')}
                 />
                 <TapRow

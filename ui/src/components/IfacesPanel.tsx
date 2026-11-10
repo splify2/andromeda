@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Gauge, LoaderCircle, ShieldCheck } from 'lucide-react'
+import { Gauge, LoaderCircle, ShieldCheck, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Empty, Group } from '@/components/ui/layout'
 import { notify } from '@/lib/notify'
 import { outputBusy } from '@/lib/outrefs'
-import { rpc } from '@/lib/rpc'
+import { awgRpc, rpc, type AwgTunnel } from '@/lib/rpc'
 import { pending } from '@/lib/pending'
+import { withTunnel } from '@/lib/awg'
+import { pluginActions } from '@/plugins/store'
+import TunnelImport from '@/components/TunnelImport'
 import { useSpecCopy } from '@/lib/speccopy'
 import { type Output, type Spec } from '@/lib/model'
 import { type Live } from '@/lib/live'
@@ -14,9 +17,11 @@ import { type Live } from '@/lib/live'
 import { S } from '@/copy'
 /** Какие туннели роутера splify2 берёт в работу.
  *
- *  Здесь человек отвечает на один вопрос: этот туннель мой рабочий или нет. Сам туннель
- *  (WireGuard, AmneziaWG, OpenVPN, xsteer) создаётся в сети роутера — это не наше дело и
- *  делается не здесь; наше — решить, можно ли вести в него трафик.
+ *  Здесь человек отвечает на один вопрос: этот туннель мой рабочий или нет. Туннель бывает двух
+ *  родов. Тот, что уже заведён в сети роутера (WireGuard, AmneziaWG, OpenVPN, xsteer), — чужая
+ *  настройка: мы её не трогаем, а только решаем, можно ли вести в него трафик. И тот, что человек
+ *  ДОБАВИЛ ЗДЕСЬ файлом или текстом WireGuard либо AmneziaWG: его устройство заводит само ядро
+ *  (выход `kind: awg`), и в настройки сети роутера идти незачем.
  *
  *  ВКЛЮЧЁННЫЙ = НАЗВАН В КАКОМ-НИБУДЬ ВЫХОДЕ, и второго места, где это хранится, нет.
  *  Отдельный список «доступных» рядом со списком выходов означал бы два источника правды:
@@ -33,7 +38,12 @@ import { S } from '@/copy'
  *  выключение вынимает устройство из выходов, которые его называют, — вплоть до удаления самого
  *  выхода (локацию смешанного пула оно выбросило бы из пула). Поэтому такие устройства здесь не
  *  показываются. Выход подписки правится в «Подписках», а в пул устройство ядра кладёт редактор
- *  выхода — там оно предлагается нарочно, локацией. */
+ *  выхода — там оно предлагается нарочно, локацией.
+ *
+ *  ДОБАВЛЕННЫЕ ТУННЕЛИ — отдельными строками, по ФАЙЛАМ на роутере (`awg_list`) и выходам `awg`
+ *  спеки: включённый — тот, у кого есть выход. Выключение убирает выход, а файл с ключом остаётся —
+ *  туннель включается обратно без повторной вставки; файл удаляется отдельной кнопкой, и только
+ *  когда им не пользуется ни сохранённая, ни применённая настройка (отказ говорит бэкенд). */
 
 const NAME_RE = /^[A-Za-z0-9_-]{1,24}$/
 
@@ -50,8 +60,19 @@ export default function IfacesPanel({ live }: { live: Live }) {
     /** Отклик своих туннелей — по имени устройства: что ответил проверенный выход (R-134). */
     const [probed, setProbed] = useState<Record<string, { ms: number; state: string } | 'run' | 'fail'>>({})
 
+    /** Файлы добавленных туннелей; `null` — бэкенд старше методов awg_*: ввода туннеля нет. */
+    const [files, setFiles] = useState<AwgTunnel[] | null>(null)
+    /** Плагин вида awg стоит (ответ awg_list). Без него ядро выход не примет — см. tunnelOn. */
+    const [awgReady, setAwgReady] = useState(true)
+    /** Туннель включается и ждёт установки плагина: переключатель занят, второй щелчок не ставит его дважды. */
+    const [turning, setTurning] = useState('')
+    const loadFiles = () => awgRpc.list()
+        .then((r) => { setFiles(r.ok ? r.tunnels || [] : null); setAwgReady(r.plugin_ready !== false) })
+        .catch(() => setFiles(null))
+
     useEffect(() => {
         rpc.devices().then((d) => setDevices(d.devices || [])).catch(() => setDevices([]))
+        void loadFiles()
     }, [])
 
     function edit(next: Spec) {
@@ -129,19 +150,115 @@ export default function IfacesPanel({ live }: { live: Live }) {
         edit({ ...spec!, outputs })
     }
 
+    /** Убрать выход добавленного туннеля. Файл остаётся: см. шапку. */
+    function tunnelOff(name: string) {
+        const busy = outputBusy(spec!, name)
+        if (busy) { notify(busy, 'warning'); return }
+        const outputs = { ...spec!.outputs }
+        delete outputs[name]
+        edit({ ...spec!, outputs })
+    }
+
+    /** Включить добавленный туннель обратно — выходом в черновик. Плагин awg ставится ДО этого,
+     *  когда его нет (его сняли, пока туннель был выключен): без плагина ядро вида не знает, и
+     *  сохранение спеки с таким выходом кончилось бы отказом. Так же, как при добавлении файла. */
+    async function tunnelOn(name: string, f?: AwgTunnel) {
+        if (!awgReady) {
+            setTurning(name)
+            try {
+                await pluginActions.install('awg')
+                setAwgReady(true)
+            } catch (e) {
+                notify(S.tunnelImport.modulNeVstal(e instanceof Error ? e.message : String(e)), 'error')
+                return
+            } finally {
+                setTurning('')
+            }
+        }
+        /* Спека — нынешний черновик, а не снимок этого отрисовывания: пока ставился плагин (десятки
+         * секунд), человек мог поправить что-то ещё, и выход ложится поверх его правки, а не вместо. */
+        edit(withTunnel(pending.saved ?? spec!, name, f))
+    }
+
+    async function tunnelDelete(name: string) {
+        try {
+            const r = await awgRpc.del(name)
+            if (!r.ok) { notify(r.error || S.ifacesPanel.tunnelNeUdalen, 'error'); return }
+            notify(S.ifacesPanel.tunnelUdalen(name), 'info')
+            await loadFiles()
+        } catch (e) {
+            notify(e instanceof Error ? e.message : S.ifacesPanel.tunnelNeUdalen, 'error')
+        }
+    }
+
     /* Устройства ядра — не свои туннели: см. шапку файла. */
     const own = devices.filter((d) => d.owner !== 'steer')
+    /* Добавленные туннели: файлы на роутере и выходы awg черновика (выход без файла в перечне —
+     * файл только что принят, перечень ещё не перечитан, либо его положили мимо панели). */
+    const awgOuts = Object.entries(spec.outputs).filter(([, o]) => o.kind === 'awg').map(([n]) => n)
+    const tunnels = files === null ? [] : [...new Set([...files.map((f) => f.name), ...awgOuts])].sort()
+    /* Имя нового туннеля не должно совпасть ни с выходом другого вида, ни с файлом уже добавленного
+     * туннеля: замена файла по тому же имени — это замена ключей рабочего туннеля, а не добавление
+     * нового (бэкенд без `replace` отвечает на неё отказом). Выход awg без файла имя не занимает:
+     * добавить ему файл — ровно то, чего ему не хватает. */
+    const taken = [
+        ...Object.entries(spec.outputs).filter(([, o]) => o.kind !== 'awg').map(([n]) => n),
+        ...(files || []).map((f) => f.name),
+    ]
 
-    if (own.length === 0) {
-        return (
+    return (
+        <div className="space-y-4">
+        {own.length === 0 && tunnels.length === 0 && (
             <Group>
                 <Empty icon={ShieldCheck} text={S.ifacesPanel.tunnelnyhUstroystvNetTunnel} />
             </Group>
-        )
-    }
-
-    return (
-        <Group>
+        )}
+        {tunnels.length > 0 && (
+            <Group head={<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{S.ifacesPanel.dobavlennye}</div>}>
+                {tunnels.map((name) => {
+                    const f = files?.find((x) => x.name === name)
+                    const on = spec.outputs[name]?.kind === 'awg'
+                    const up = on && !!live.status?.outputs?.[name]?.up
+                    const pr = probed[name]
+                    return (
+                        <div key={name} className="flex min-h-[52px] select-none items-center gap-3 py-2">
+                            <span className={`h-2 w-2 shrink-0 rounded-full ${up ? 'bg-success' : 'bg-muted-foreground'}`} aria-hidden="true" />
+                            <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-medium">{name}</div>
+                                <div className="mt-0.5 truncate text-xs text-subtle">
+                                    {[f ? (f.amnezia ? 'AmneziaWG' : 'WireGuard') : '', f?.endpoint ? S.ifacesPanel.server(f.endpoint) : '', on ? '' : S.ifacesPanel.neIspolzuetsya]
+                                        .filter(Boolean).join(' · ')}
+                                </div>
+                                {pr && pr !== 'run' && (
+                                    <div role="status" className={`mt-0.5 truncate text-xs ${pr !== 'fail' && pr.ms >= 0 ? 'text-success' : 'text-warning-fg'}`}>
+                                        {pr === 'fail' ? S.ifacesPanel.proverkaNeVyshla : pr.ms >= 0 ? S.ifacesPanel.otklik(pr.ms) : pr.state || S.ifacesPanel.netOtklika}
+                                    </div>
+                                )}
+                            </div>
+                            {on && (
+                                <Button variant="ghost" size="sm" disabled={pr === 'run'} onClick={() => void probe(name, name)}
+                                    aria-label={`${S.ifacesPanel.proverit} ${name}`}>
+                                    {pr === 'run' ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Gauge className="h-4 w-4" aria-hidden="true" />}
+                                    {pr === 'run' ? S.ifacesPanel.proveryaem : S.ifacesPanel.proverit}
+                                </Button>
+                            )}
+                            {!on && f && (
+                                <Button variant="ghost" size="sm" onClick={() => void tunnelDelete(name)} aria-label={`${S.ifacesPanel.udalit} ${name}`}>
+                                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                                    {S.ifacesPanel.udalit}
+                                </Button>
+                            )}
+                            <Switch on={on} label={name} disabled={turning === name}
+                                onClick={() => (on ? tunnelOff(name) : void tunnelOn(name, f))} />
+                        </div>
+                    )
+                })}
+            </Group>
+        )}
+        {own.length > 0 && (
+        <Group head={tunnels.length > 0 || files !== null
+            ? <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{S.ifacesPanel.tunneliRoutera}</div>
+            : undefined}>
             {own.map((d) => {
                 const outs = usedBy(d.name)
                 const on = outs.length > 0
@@ -195,5 +312,14 @@ export default function IfacesPanel({ live }: { live: Live }) {
                 )
             })}
         </Group>
+        )}
+        {files !== null && (
+            <Group>
+                <div className="py-3">
+                    <TunnelImport taken={taken} onAdded={(name, r) => { edit(withTunnel(pending.saved ?? spec!, name, r)); void loadFiles() }} />
+                </div>
+            </Group>
+        )}
+        </div>
     )
 }
