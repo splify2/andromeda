@@ -19,8 +19,15 @@ check() { if [ "$2" = "$3" ]; then printf '%-72s ok\n' "$1"; else printf '%-72s 
 
 ui_list() { sed -n "s/^export const $1 = \[\(.*\)\]/\1/p" "$HERE/ui/src/lib/engine.ts" | tr -d "'," ; }
 inst() { sed -n "s/^$1=\"\(.*\)\"/\1/p" "$SP/install.sh"; }
-check "перечень модулей: интерфейс = установщик" "$(inst STEER_MODULES)" "$(ui_list STEER_MODULES)"
-check "умолчание к первой установке: интерфейс = установщик" "$(inst STEER_DEFAULT_MODULES)" "$(ui_list DEFAULT_MODULES)"
+# Установщик линии 2.1 предлагает плагины (STEER_PLUGINS): всё, что знает интерфейс, и сверх того виды, которые
+# интерфейс ставит сам по выходам спеки (warpbox, awg). Поэтому перечень интерфейса — подмножество, а умолчание
+# к первой установке — одно и то же.
+missing=""
+for m in $(ui_list STEER_MODULES); do
+    case " $(inst STEER_PLUGINS) " in *" $m "*) ;; *) missing="$missing $m" ;; esac
+done
+check "перечень модулей интерфейса входит в плагины установщика" "" "${missing# }"
+check "умолчание к первой установке: интерфейс = установщик" "$(inst STEER_DEFAULT_PLUGINS)" "$(ui_list DEFAULT_MODULES)"
 pk="$SP/files/usr/lib/splify2/rpcd/pkg-lib.sh"
 check "перечень модулей: интерфейс = бэкенд" "$(sed -n 's/^STEER_MODULES="\(.*\)"/\1/p' "$pk")" "$(ui_list STEER_MODULES)"
 
