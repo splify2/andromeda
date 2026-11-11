@@ -178,8 +178,11 @@ class Router extends EventEmitter {
     async connect(address, password, username = 'root') {
         const base = normalizeBase(address)
         const info = await this.http(base, 'GET', '/v1/info', undefined, undefined, CONNECT_INFO_MS)
+        /* Шлюз, через который работает приложение, — плагин Desktop API (desktop-api): без него адрес /v1/info
+         * отвечает 404, хотя splify2 на роутере стоит и версия у него годная. Прежний текст «обновите splify2»
+         * отправлял человека обновлять то, что обновлять не нужно. */
         if (info.status === 404 || info.data?.product !== 'splify2')
-            throw new ApiError(info.status, 'no_api', 'На роутере нет splify2 нужной версии — обновите splify2')
+            throw new ApiError(info.status, 'no_api', 'На роутере нет плагина Desktop API — поставьте его во вкладке «Плагины» splify2')
         const r = await this.http(base, 'POST', '/v1/auth/login', {
             username, password,
             device_name: os.hostname().slice(0, 64) || 'Компьютер',
