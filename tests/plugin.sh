@@ -2,7 +2,7 @@
 # Andromeda как плагин splify2: манифест, архив, граница API.
 #
 #   1. `s2p lint --official` чист на исходниках плагина (plugin/) и на собранном (build/andromeda/, нужен `sh build.sh`).
-#   2. Тест совместимости SDK с хостом splify2-api 1.1 (`tests/compat/run.sh <каталог> 1.1`) — на обоих.
+#   2. Тест совместимости SDK с хостом splify2-api 1.3 (`tests/compat/run.sh <каталог> 1.3`) — на обоих.
 #   3. Архив out/andromeda-<версия>-all.s2p: проверяется s2p, в нём вид luci/home.js и сборка панели.
 #   4. Граница API — Andromeda ходит к splify2 только через публичные методы объекта `splify2` (списком `methods.tsv` в SDK):
 #      каждый вызов интерфейса есть в списке; вынесенные из каркаса методы (вид `moved`) называют плагин, и он в `requires`;
@@ -16,7 +16,7 @@ SDK="${PLUGIN_SDK:-$HERE/../plugin-sdk}"
 S2P="$(command -v s2p 2>/dev/null || echo "$SDK/bin/s2p")"
 [ -x "$S2P" ] || { echo "нет s2p: PLUGIN_SDK=<каталог plugin-sdk> (sh build.sh там же)"; exit 1; }
 COMPAT="$SDK/tests/compat"
-HOSTV=1.1
+HOSTV=1.3
 fails=0
 check() { if [ "$2" = "$3" ]; then printf '%-76s ok\n' "$1"; else printf '%-76s ПРОВАЛ\n    ожидалось: %s\n    получено:  %s\n' "$1" "$2" "$3"; fails=$((fails + 1)); fi; }
 ok_cmd() { n="$1"; shift; if "$@" >/tmp/andromeda-plugin.$$ 2>&1; then printf '%-76s ok\n' "$n"; else printf '%-76s ПРОВАЛ\n' "$n"; sed 's/^/    /' /tmp/andromeda-plugin.$$; fails=$((fails + 1)); fi; rm -f /tmp/andromeda-plugin.$$; }
@@ -58,6 +58,11 @@ for l in open(tsv, encoding="utf-8"):
     f = l.rstrip("\n").split("\t")
     kinds[f[0]] = (f[1], f[2] if len(f) > 2 else "")
 req = set(json.load(open(f"{here}/plugin/plugin.json"))["requires"]["plugins"])
+# Методы необязательного плагина autoapply (применение на роутере): в таблице каркаса их нет, потому что это методы
+# плагина, а не каркаса, и панель без них работает — применяет сама (ui/src/lib/pending.ts, backend). В requires
+# плагин не записан по той же причине.
+optional = {"autoapply_status", "autoapply_kick", "autoapply_cancel"}
+calls -= optional
 print("count", "yes" if len(calls) > 40 else "no:%d" % len(calls))
 print("unknown", " ".join(sorted(c for c in calls if c not in kinds)))
 print("moved-not-required", " ".join(sorted("%s(%s)" % (c, kinds[c][1]) for c in calls if c in kinds and kinds[c][0] == "moved" and kinds[c][1] not in req)))

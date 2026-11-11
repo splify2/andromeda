@@ -7,7 +7,7 @@
   "description": "The splify2 panel: rules, outputs, subscriptions, DNS, requests and diagnostics on one page",
   "homepage": "https://github.com/splify2/andromeda",
   "compat": {
-    "splify2-api": "^1.1"
+    "splify2-api": "^1.3"
   },
   "arch": "all",
   "requires": {
