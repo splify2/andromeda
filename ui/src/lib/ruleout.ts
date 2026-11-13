@@ -383,9 +383,19 @@ function prune(spec: Spec, root: string): Spec {
     let outputs = { ...spec.outputs }
     for (;;) {
         const cur: Spec = { ...spec, outputs }
+        const used = (n: string) => Object.values(outputUsers(cur, [n])).some((l) => l.length > 0)
+        /* Нужное держится вместе со всем, что под ним. Туннель-часть пула ссылок не имеет вовсе: пул называет
+         * его УСТРОЙСТВО, а не выход, и outputUsers его не видит. Прежде правило, перешедшее на пул из
+         * своего же прежнего набора (такой же набор нашёлся — `same` в applyTarget), оставалось с пулом
+         * без единого туннеля: части уходили вместе с прежним верхом, а пул — нет. На главной это была
+         * карточка «WireGuard» (выход-интерфейс) с «устройства googleai-1 нет» (чат, D#2986). */
+        const live = new Set<string>()
+        for (const n of Object.keys(outputs)) {
+            if (tree.includes(n) && !used(n)) continue
+            for (const m of treeOf(outputs, n)) live.add(m)
+        }
         /* «Блок» никому не нужный убирается: настройки у него нет, при следующем выборе заведётся заново. */
-        const gone = tree.filter((n) => outputs[n] && (!kept(outputs[n]) || (outputs[n].kind as string) === 'block') &&
-            Object.values(outputUsers(cur, [n])).every((l) => l.length === 0))
+        const gone = tree.filter((n) => outputs[n] && (!kept(outputs[n]) || (outputs[n].kind as string) === 'block') && !live.has(n))
         if (!gone.length) return cur
         outputs = Object.fromEntries(Object.entries(outputs).filter(([k]) => !gone.includes(k)))
     }
@@ -419,13 +429,21 @@ function place(spec: Spec, built: Built, top: string, old: Record<string, Output
     for (const n of Object.keys(old)) if (n !== top) oldByShape.set(shape(old, n), n)
     const draft: Record<string, Output> = { ...outputs, [built.top.name]: built.top }
     for (const p of built.owned) draft[p.name] = p
+    /* Два прохода: сначала прежние имена всем частям с прежним содержимым, потом свободные — прочим. Свободное
+     * имя не берётся и из прежнего набора: в один проход новый пул забирал имя первого прежнего туннеля
+     * («googleai-1»), а туннели съезжали на следующие номера — каждый живой туннель перезапускался, а имя
+     * устройства переходило от туннеля к пулу. */
+    const fresh: string[] = []
     for (const p of built.owned) {
         const same = oldByShape.get(shape(draft, p.name))
-        if (same && !taken(same)) { rename.set(p.name, same); continue }
+        if (same && !taken(same)) rename.set(p.name, same)
+        else fresh.push(p.name)
+    }
+    const at = (i: number) => `${top.slice(0, NAME_MAX - 1 - String(i).length)}-${i}`
+    for (const p of fresh) {
         let k = 1
-        const at = (i: number) => `${top.slice(0, NAME_MAX - 1 - String(i).length)}-${i}`
-        while (taken(at(k))) k++
-        rename.set(p.name, at(k))
+        while (taken(at(k)) || at(k) in old) k++
+        rename.set(p, at(k))
     }
     const r = (n: string) => rename.get(n) ?? n
     for (const o of [built.top, ...built.owned]) {

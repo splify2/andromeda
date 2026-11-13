@@ -291,6 +291,11 @@ class PendingStore {
     }
 
     private async fetchSpec(): Promise<Spec> {
+        /* Снимок применённого и состояние автоприменения — ВМЕСТЕ со спекой, а не после неё: каждый
+         * из трёх — запуск скрипта на роутере, и цепочкой они удлиняли первую отрисовку на два
+         * оборота (#2890). */
+        const appliedP = rpc.appliedGet().catch(() => null)
+        const autoP = Promise.resolve().then(() => rpc.autoapplyStatus()).catch(() => null)
         let saved: Spec
         try {
             saved = await this.readSpec(LOAD_RETRY_MS)
@@ -300,13 +305,11 @@ class PendingStore {
             throw e
         }
         /* Снимка применённого нет (ещё ни разу не применяли) — считаем применённым сохранённое:
-         * счётчик стартует с нуля. */
-        const [applied, auto] = await Promise.all([
-            rpc.appliedGet().catch(() => null),
-            Promise.resolve().then(() => rpc.autoapplyStatus()).catch(() => null),
-        ])
+         * счётчик стартует с нуля. Состояние автоприменения экран НЕ ждёт: спека и снимок рисуют
+         * главную, а ответ autoapply_status (запуск плагина на роутере) доезжает следом. */
+        const applied = await appliedP
         /* Роутер применяет сам, если плагин включён и называет состояние (`state` — с версии 1.1). */
-        this.backend = !!(auto && auto.ok && auto.enabled && typeof auto.state === 'string')
+        const backendOf = (auto: Awaited<typeof autoP>) => !!(auto && auto.ok && auto.enabled && typeof auto.state === 'string')
         if (!this.saved) {
             /* Спека прежнего формата (v1) переписывается в v2 сразу, без участия человека:
              * движок 2.0 v1 больше не читает. Смысл правил не меняется, поэтому счётчик
@@ -320,10 +323,15 @@ class PendingStore {
             this.saveError = null
             this.loadFailed = false
             this.emit()
+            const auto = await autoP
+            this.backend = backendOf(auto)
+            this.emit()
             if (migrate && !(await this.coreTooOld())) this.edit(this.saved)
             /* Записанное и не применённое до открытия (правили в другом окне, роутер перезагрузили в
              * паузе) или применение, идущее прямо сейчас: показываем «Применение» и доводим до конца. */
             else if (this.backend && auto && auto.state !== 'idle' && auto.state !== 'rejected') void this.follow()
+        } else {
+            this.backend = backendOf(await autoP)
         }
         return this.saved as Spec
     }

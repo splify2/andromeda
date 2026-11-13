@@ -345,6 +345,7 @@ export const ru = {
         kakSprashivat: "Как спрашивать",
         dlyaImenPodPravilami: "Для имён под правилами",
         dlyaOstalnyhSaytov: "Для остальных сайтов",
+        otdelnyyDlyaPravil: "Отдельный DNS для имён под правилами",
         dnsRoutera: "DNS роутера",
         odinServer: "Один сервер",
         neskolkoServerov: "Несколько",

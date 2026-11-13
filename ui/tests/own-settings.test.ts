@@ -23,7 +23,7 @@ describe('настройки Andromeda', () => {
             values: { setup_wizard: false },
         })
         await expect(m.ownSettings()).resolves.toEqual({ setup_wizard: false, quick_start: true })
-        expect(declare).toHaveBeenCalledWith({ object: 'splify2', method: 'plugin_settings_get', params: ['id'] })
+        expect(declare).toHaveBeenCalledWith({ object: 'splify2', method: 'plugin_settings_get', params: ['id'], nobatch: true })
     })
 
     it('нет значения — умолчание схемы хоста', async () => {

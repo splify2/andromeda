@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { Bug, Heart, House, LayoutList, Send } from 'lucide-react'
 import EngineToggle from '@/components/EngineToggle'
 import { type Live } from '@/lib/live'
@@ -63,6 +64,23 @@ export default function Rail({ live, section, onSection, counts, extra, hide }: 
     const sections = useSections().map((r) => r.value)
     const own = hide?.length ? sections.filter((it) => !hide.includes(it.id)) : sections
     const items: { id: string; label: string; icon: SectionIcon }[] = extra?.length ? [...own, ...extra.map(({ id, label, icon }) => ({ id, label, icon }))] : own
+    /* Активный пункт нижней панели подводится в видимую часть ЕЁ ЖЕ прокруткой вбок — и только при
+     * смене раздела. Прежде здесь стоял scrollIntoView в ref-функции, а ref-функция новая на каждой
+     * отрисовке: рельс перерисовывается с каждым кругом опроса (5 с), и scrollIntoView звался каждые
+     * пять секунд. Он прокручивает ВСЕ предки элемента, включая документ: Firefox на телефоне, у
+     * которого нижняя панель с плавающей строкой адреса выходит за видимую область на высоту строки,
+     * доводил её «в вид» прокруткой страницы — интерфейс сам уезжал вниз (#2949). Теперь документ
+     * не трогается вовсе: двигается только scrollLeft самой панели. */
+    const bar = useRef<HTMLElement>(null)
+    const keys = items.map((it) => it.id).join('|')
+    useEffect(() => {
+        const nav = bar.current
+        const el = nav?.querySelector<HTMLElement>('[aria-current="page"]')
+        if (!nav || !el || nav.scrollWidth <= nav.clientWidth) return
+        const l = el.offsetLeft, r = l + el.offsetWidth
+        if (l < nav.scrollLeft) nav.scrollLeft = l
+        else if (r > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = r - nav.clientWidth
+    }, [section, keys])
     return (
         <>
             {/* ── широкий экран: колонка слева ─────────────────────────────────────── */}
@@ -169,6 +187,7 @@ export default function Rail({ live, section, onSection, counts, extra, hide }: 
                 оказывались под ней — человек видел четыре кнопки из шести. Портрет уже 768, там
                 меню у темы спрятано, и панель была целой; отсюда «не всегда». */}
             <nav
+                ref={bar}
                 aria-label={S.rail.razdely}
                 className="an-glass-chrome an-glass-float sp-bottom-bar fixed bottom-0 z-40 flex overflow-x-auto border-t lg:hidden"
             >
@@ -180,7 +199,6 @@ export default function Rail({ live, section, onSection, counts, extra, hide }: 
                             key={id}
                             type="button"
                             aria-current={on ? 'page' : undefined}
-                            ref={on ? (el) => el?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }) : undefined}
                             onClick={() => onSection(id)}
                             className={[
                                 'relative flex min-w-[3.75rem] flex-auto flex-col items-center gap-1 px-0.5 pb-2 pt-2.5',

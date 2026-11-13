@@ -47,6 +47,6 @@ describe('метод paths', () => {
         const declare = vi.fn(() => call)
         ;(window as unknown as Record<string, unknown>).luci_rpc = { declare }
         await expect(rpc.paths()).resolves.toEqual({ ok: true, lists: '/x' })
-        expect(declare).toHaveBeenCalledWith({ object: 'splify2', method: 'paths', params: [] })
+        expect(declare).toHaveBeenCalledWith({ object: 'splify2', method: 'paths', params: [], nobatch: true })
     })
 })

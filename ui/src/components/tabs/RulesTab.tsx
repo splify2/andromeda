@@ -9,6 +9,7 @@ import {
     customServices,
     DIRECT,
     isPart,
+    isUpstreamGroup,
     routedOutputs,
     type Channel,
     type Narrow,
@@ -397,10 +398,13 @@ export default function RulesTab({
                 onSave={(next) => {
                     if (!draft) return closeEditor()
                     let mine: Spec = { ...draft.spec, channels: draft.spec.channels.map((c, k) => (k === open ? next : c)) }
-                    /* Сервер DNS правила — готовый профиль, ещё не сервер роутера: заводится сейчас. */
-                    const preset = typeof next.dns === 'string' && !mine.dns?.upstreams?.[next.dns] && !mine.dns?.groups?.[next.dns]
-                        ? PRESETS.find((p) => p.name === next.dns) : undefined
-                    if (preset) mine = { ...mine, dns: { ...(mine.dns || {}), upstreams: { ...(mine.dns?.upstreams || {}), [preset.name]: { ...preset.up } } } }
+                    /* Серверы DNS правила — готовые профили, ещё не серверы роутера: заводятся сейчас. Один сервер —
+                     * имя, несколько — группа прямо в правиле (`dns: { servers, mode }`): у неё каждый член — имя. */
+                    const named = typeof next.dns === 'string' ? [next.dns] : isUpstreamGroup(next.dns) ? next.dns.servers : []
+                    for (const n of named) {
+                        const preset = !mine.dns?.upstreams?.[n] && !mine.dns?.groups?.[n] ? PRESETS.find((p) => p.name === n) : undefined
+                        if (preset) mine = { ...mine, dns: { ...(mine.dns || {}), upstreams: { ...(mine.dns?.upstreams || {}), [preset.name]: { ...preset.up } } } }
+                    }
                     edit(pruneDnsPresets(mergeSpec(draft.base, mine, spec)))
                     closeEditor()
                 }}

@@ -113,6 +113,8 @@ declare global {
                 method: string
                 params?: string[]
                 expect?: Record<string, unknown>
+                /** LuCI: отдельный запрос HTTP вместо общего пакета такта (см. declare ниже). */
+                nobatch?: boolean
             }) => (...args: unknown[]) => Promise<unknown>
         }
     }
@@ -148,7 +150,13 @@ function declare<T>(method: string, params: string[] = []) {
                     new Error(`ubus is unavailable outside LuCI (splify.${method})`),
                 ) as Promise<T>
             }
-            call = bridge.declare({ object: 'splify2', method, params })
+            /* nobatch — КАЖДЫЙ вызов своим запросом HTTP. LuCI складывает вызовы одного кадра
+             * (requestAnimationFrame) в один пакет, а uhttpd исполняет пакет ПОДРЯД: ответ приходит,
+             * когда готов последний. На открытии главной в один пакет попадали состояние ядра и спека
+             * вместе с каталогом списков, своими списками, путями и перечнем плагинов — первая
+             * отрисовка ждала их сумму (#2890). Отдельными запросами rpcd исполняет их одновременно,
+             * и главная рисуется по самому медленному из НУЖНЫХ ей, а не по сумме всех. */
+            call = bridge.declare({ object: 'splify2', method, params, nobatch: true })
         }
         return call(...args) as Promise<T>
     }

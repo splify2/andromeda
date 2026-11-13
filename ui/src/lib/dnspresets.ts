@@ -1,4 +1,4 @@
-import { type Channel, type DnsSpec, type Spec, type Upstream } from '@/lib/model'
+import { isUpstreamGroup, type Channel, type DnsSpec, type Spec, type Upstream } from '@/lib/model'
 
 /** Готовые серверы DNS: карточки вкладки DNS и выбор «Сервер DNS» в правиле (приложение для ПК).
  *  Имя — ключ сервера в dns.upstreams, когда профиль выбран; название для человека — в
@@ -51,7 +51,11 @@ export function protoOfUrl(url: string): string {
 export function pruneDnsUpstreams(dns: DnsSpec, channels: Channel[]): DnsSpec {
     const keep = new Set<string>([dns.upstream, dns.other].filter((x): x is string => !!x))
     for (const g of Object.values(dns.groups || {})) for (const m of g.servers) keep.add(m)
-    for (const c of channels) if (typeof c.dns === 'string') keep.add(c.dns)
+    for (const c of channels) {
+        if (typeof c.dns === 'string') keep.add(c.dns)
+        /* Несколько серверов прямо в правиле (`dns: { servers, mode }`) — тоже ссылки на серверы роутера. */
+        else if (isUpstreamGroup(c.dns)) for (const m of c.dns.servers) keep.add(m)
+    }
     const up = { ...(dns.upstreams || {}) }
     for (const [n, u] of Object.entries(up)) if (!keep.has(n) && PRESETS.some((p) => p.up.url === u.url)) delete up[n]
     return { ...dns, upstreams: up }

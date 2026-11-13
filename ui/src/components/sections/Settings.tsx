@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Info, Layers, Library, Network, Sliders } from 'lucide-react'
+import { Info, Layers, LayoutList, Library, Network, Sliders } from 'lucide-react'
 import { Group, ScreenHeader, TapRow } from '@/components/ui/layout'
 import CatalogTab from '@/components/tabs/CatalogTab'
 import BackupCard from '@/components/BackupCard'
@@ -144,6 +144,14 @@ export default function Settings({
                     .filter(Boolean)
                     .join(' · ') || undefined}
                 onClick={() => setScreen('about')}
+            />
+            {/* Базовый вид (каркас на LuCI) — и с телефона: в нижней панели для него места нет, а пункт
+                в колонке слева виден только на широком экране (#2975, #3026). Та же вкладка, что и в
+                колонке; обратно каркас ведёт своей ссылкой «Открыть Andromeda». */}
+            <TapRow
+                icon={LayoutList}
+                title={S.rail.bazovyy}
+                onClick={() => window.location.assign(`${window.location.pathname}?basic=1`)}
             />
         </Group>
     )

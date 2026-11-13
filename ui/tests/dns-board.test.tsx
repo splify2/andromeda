@@ -54,3 +54,34 @@ describe('вкладка DNS — карточки', () => {
         await waitFor(() => expect(screen.getAllByText('3 мс').length).toBeGreaterThan(0))
     })
 })
+
+// «DNS для правил / DNS для остального» (#2964, #3023): раздельный выбор вернулся выключателем.
+describe('вкладка DNS — отдельный DNS для имён под правилами', () => {
+    const ups = {
+        cloudflare: { url: 'https://cloudflare-dns.com/dns-query', ips: ['1.1.1.1'] },
+        google: { url: 'https://dns.google/dns-query', ips: ['8.8.8.8'] },
+    }
+    it('общая группа разводится: имена под правилами — своя копия, остальные — прежняя', async () => {
+        current = { ...current, dns: { upstreams: ups, groups: { all: { servers: ['cloudflare', 'google'], mode: 'failover' } }, upstream: 'all', other: 'all' } } as Spec
+        render(<Dns live={live} board />)
+        expect(await screen.findByRole('heading', { name: S.dns.vseZaprosyDns })).toBeInTheDocument()
+        fireEvent.click(screen.getByRole('switch', { name: S.dns.otdelnyyDlyaPravil }))
+        await waitFor(() => expect(edit).toHaveBeenCalled())
+        const d = edit.mock.calls.at(-1)![0].dns
+        expect(d.other).toBe('all')
+        expect(d.upstream).toBe('rules')
+        expect(d.groups.rules).toEqual({ servers: ['cloudflare', 'google'], mode: 'failover' })
+    })
+
+    it('назначения разные — раздельный вид сам; выключатель снова пишет одно в оба', async () => {
+        current = { ...current, dns: { upstreams: ups, upstream: 'google', other: 'cloudflare' } } as Spec
+        render(<Dns live={live} board />)
+        expect(await screen.findByRole('heading', { name: S.dns.dlyaOstalnyhSaytov })).toBeInTheDocument()
+        expect(screen.getByText(S.dns.dlyaImenPodPravilami)).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /Cloudflare \(DoH\)/ }).getAttribute('aria-pressed')).toBe('true')
+        fireEvent.click(screen.getByRole('switch', { name: S.dns.otdelnyyDlyaPravil }))
+        await waitFor(() => expect(edit).toHaveBeenCalled())
+        const d = edit.mock.calls.at(-1)![0].dns
+        expect([d.upstream, d.other]).toEqual(['cloudflare', 'cloudflare'])
+    })
+})

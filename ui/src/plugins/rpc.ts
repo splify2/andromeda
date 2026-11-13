@@ -46,7 +46,7 @@ function bridgeCall(object: string, method: string, params: Record<string, unkno
     const id = `${object}|${method}|${keys.join(',')}`
     let fn = cache.get(id)
     if (!fn) {
-        fn = bridge.declare({ object, method, params: keys })
+        fn = bridge.declare({ object, method, params: keys, nobatch: true })
         cache.set(id, fn)
     }
     return fn(...keys.map((k) => params[k]))

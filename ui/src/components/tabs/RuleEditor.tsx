@@ -884,7 +884,18 @@ export default function RuleEditor({
         ...PRESETS.filter((p) => !upstreamNames.includes(p.name) && !upstreamUrls.has(p.up.url))
             .map((p) => ({ name: p.name, title: PRESET_TITLE.get(p.name) ?? p.name, url: p.up.url })),
     ]
-    const dnsShown = allDns ? dnsChoices : dnsChoices.filter((c, i) => i < 8 || ch.dns === c.name)
+    /* Несколько серверов у правила (#2965, #3012): отмеченные пилюли — по порядку отметки; один — имя сервера,
+     * два и больше — группа прямо в правиле (`dns: { servers, mode }` спеки v2), по очереди или сразу все. Группа
+     * раздела «DNS» по имени (записана там или руками) — выбор целиком: группы в группу ядро не берёт. */
+    const namedGroup = typeof ch.dns === 'string' && groupNames.includes(ch.dns) ? ch.dns : undefined
+    const dnsPicked: string[] = typeof ch.dns === 'string' ? (namedGroup ? [] : [ch.dns]) : isUpstreamGroup(ch.dns) ? ch.dns.servers : []
+    const dnsMode = isUpstreamGroup(ch.dns) && ch.dns.mode === 'race' ? 'race' : 'failover'
+    function pickDns(name: string) {
+        const list = dnsPicked.includes(name) ? dnsPicked.filter((x) => x !== name) : [...dnsPicked, name]
+        if (!list.length) { const { dns: _d, ...rest } = ch; onChange(rest as Channel); return }
+        onChange({ ...ch, dns: list.length === 1 ? list[0] : { servers: list, mode: dnsMode } })
+    }
+    const dnsShown = allDns ? dnsChoices : dnsChoices.filter((c, i) => i < 8 || dnsPicked.includes(c.name))
     const dnsBlock = (
         <section className="sp-board-group an-glass space-y-3 rounded-2xl border p-3">
             <div className="flex items-center justify-between gap-3 px-1 py-0.5">
@@ -905,6 +916,26 @@ export default function RuleEditor({
             </div>
             {dnsOn && hasDomains && (
                 <>
+                    {(dnsPicked.length > 0 || namedGroup) && (
+                        <div className="flex flex-wrap items-center gap-3 px-1">
+                            {dnsPicked.length > 1 && (
+                                <div className="w-full sm:w-[280px]">
+                                    <Segmented
+                                        label={S.ruleEditor.nastroykaDnsDlyaPravila}
+                                        value={dnsMode}
+                                        onChange={(v) => isUpstreamGroup(ch.dns) && onChange({ ...ch, dns: { ...ch.dns, mode: v } })}
+                                        items={[
+                                            { value: 'failover', label: S.dns.poOcheredi },
+                                            { value: 'race', label: S.dns.srazuVse },
+                                        ]}
+                                    />
+                                </div>
+                            )}
+                            <span className="text-xs text-muted-foreground">
+                                {namedGroup ? S.ruleEditor.gruppaDns(namedGroup) : S.dns.vybranoServerov(dnsPicked.length)}
+                            </span>
+                        </div>
+                    )}
                     <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
                         <button
                             type="button"
@@ -915,20 +946,26 @@ export default function RuleEditor({
                             <Plus className="h-4 w-4" aria-hidden="true" /> {S.dns.svoyAdres}
                         </button>
                         {dnsShown.map((c) => {
-                            const on = ch.dns === c.name
+                            const on = dnsPicked.includes(c.name)
+                            const rank = on && dnsPicked.length > 1 ? dnsPicked.indexOf(c.name) + 1 : undefined
                             return (
                                 <button
                                     key={c.name}
                                     type="button"
                                     aria-pressed={on}
-                                    onClick={() => onChange({ ...ch, dns: c.name })}
+                                    onClick={() => pickDns(c.name)}
                                     className={[
-                                        `${PILL} transition-[border-color,box-shadow] duration-200 hover:border-primary/50`,
+                                        `${PILL} relative transition-[border-color,box-shadow] duration-200 hover:border-primary/50`,
                                         on ? 'border-primary/80 bg-primary/10 shadow-[inset_0_1px_0_var(--an-glass-edge),0_0_0_2px_color-mix(in_srgb,var(--sp-primary)_25%,transparent)]' : '',
                                     ].join(' ')}
                                 >
                                     <span className="min-w-0 truncate text-[13px] font-semibold">{c.title}</span>
                                     <ConfBadges list={[{ id: 'proto', text: DNS_PROTO[protoOfUrl(c.url)] ?? 'DNS', group: 'transport' }]} className={BADGE_ROW} />
+                                    {rank !== undefined && (
+                                        <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-primary-foreground">
+                                            {rank}
+                                        </span>
+                                    )}
                                 </button>
                             )
                         })}

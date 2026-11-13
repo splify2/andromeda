@@ -121,7 +121,10 @@ function SubRow({ sub, onChanged }: { sub: Sub; onChanged: () => void }) {
     return (
         <div className="sp-board-tile an-glass flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3">
             <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <div className="min-w-0 flex-1">
+            {/* Нижняя граница ширины у имени — чтобы на телефоне выбор расписания и кнопки уходили
+                строкой ниже, а не сжимали имя до «1..» (#2948). С flex-1 без неё имя занимало ноль и
+                в перенос строки не участвовало. */}
+            <div className="min-w-[132px] flex-1">
                 <div className="truncate text-sm font-semibold">{sub.title || sub.name}</div>
                 <div className="truncate text-xs text-muted-foreground">
                     {[sourceOf(sub), sub.present ? '' : S.vlessScreen.neSkachana].filter(Boolean).join(' · ')}

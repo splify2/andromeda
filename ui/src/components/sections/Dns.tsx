@@ -8,7 +8,7 @@ import { pending } from '@/lib/pending'
 import { dnsErrorText } from '@/lib/engineerr'
 import { useSpecCopy } from '@/lib/speccopy'
 import { rpc, type DnsLog } from '@/lib/rpc'
-import { isPart, type DomainMode, type DnsSpec, type Spec, type Upstream, type UpstreamGroup } from '@/lib/model'
+import { isPart, isUpstreamGroup, type DomainMode, type DnsSpec, type Spec, type Upstream, type UpstreamGroup } from '@/lib/model'
 import { type Live } from '@/lib/live'
 import { withUrl } from '@/lib/dnsurl'
 import DnsUpstreamExtras from '@/components/DnsUpstreamExtras'
@@ -55,6 +55,11 @@ type Lamp = { ok: boolean; ms?: number; error?: string } | 'busy'
 
 /** Последние ответы проверки (по адресу) — на всё окно, между заходами на вкладку. */
 let lastProbe: Record<string, Lamp> = {}
+/** Когда кончилась последняя проверка. Сама она при открытии вкладки — только если та старше
+ *  PROBE_FRESH_MS: проверка десятков серверов стоит роутеру запуска ядра на 3 с, а лампочки
+ *  прошлой проверки видны сразу. Кнопка «Проверить» проверяет всегда. */
+let lastProbeAt = 0
+const PROBE_FRESH_MS = 10 * 60_000
 
 /** Хост сервера из адреса — подписью на карточке. */
 function hostOf(url: string): string {
@@ -290,12 +295,14 @@ export default function Dns({ live, board = false }: { live?: Live; board?: bool
     const [allPresets, setAllPresets] = useState(false)
     /** Сервер, чьи поля открыты под карточками. */
     const [editing, setEditing] = useState<string | null>(null)
+    /** «Отдельный DNS для имён под правилами» включён, но серверы ещё одни и те же (назначения не разошлись). */
+    const [splitWanted, setSplitWanted] = useState(false)
     /** Проверка серверов с роутера: по адресу — ответил ли и за сколько. */
     const [probe, setProbeRaw] = useState<{ busy: boolean; res: Record<string, Lamp>; unsupported?: boolean }>(() => ({ busy: false, res: { ...lastProbe } }))
     /** Последний ответ запоминается на всё окно: при возврате на вкладку лампочки видны сразу. */
     const setProbe: typeof setProbeRaw = (v) => setProbeRaw((cur) => {
         const next = typeof v === 'function' ? v(cur) : v
-        if (!next.busy && Object.keys(next.res).length) lastProbe = { ...next.res }
+        if (!next.busy && Object.keys(next.res).length) { lastProbe = { ...next.res }; lastProbeAt = Date.now() }
         return next
     })
 
@@ -308,6 +315,7 @@ export default function Dns({ live, board = false }: { live?: Live; board?: bool
     useEffect(() => {
         if (!board || !spec || probed.current) return
         probed.current = true
+        if (Date.now() - lastProbeAt < PROBE_FRESH_MS) return
         probeRef.current()
     }, [board, spec])
 
@@ -341,7 +349,10 @@ export default function Dns({ live, board = false }: { live?: Live; board?: bool
         const next: Record<string, Upstream> = {}
         for (const [k, v] of Object.entries(ups)) next[k === old ? nn : k] = v
         /* Правила, общий сервер, сервер остальных и группы ссылаются на имя — уводим их за ним. */
-        const channels = spec!.channels.map((c) => (c.dns === old ? { ...c, dns: nn } : c))
+        const channels = spec!.channels.map((c) =>
+            c.dns === old ? { ...c, dns: nn }
+                : isUpstreamGroup(c.dns) && c.dns.servers.includes(old) ? { ...c, dns: { ...c.dns, servers: c.dns.servers.map((m) => (m === old ? nn : m)) } }
+                    : c)
         const g: Record<string, UpstreamGroup> = {}
         for (const [k, v] of Object.entries(groups)) g[k] = { ...v, servers: v.servers.map((m) => (m === old ? nn : m)) }
         const d: DnsSpec = {
@@ -358,7 +369,7 @@ export default function Dns({ live, board = false }: { live?: Live; board?: bool
         pending.edit(out)
     }
     function remove(name: string) {
-        const used = spec!.channels.filter((c) => c.dns === name).map((c) => c.name)
+        const used = spec!.channels.filter((c) => c.dns === name || (isUpstreamGroup(c.dns) && c.dns.servers.includes(name))).map((c) => c.name)
         if (used.length) { notify(S.dns.serverVybranVPravilah(name, used.join(', ')), 'warning'); return }
         const inGroups = Object.entries(groups).filter(([, g]) => g.servers.includes(name)).map(([k]) => k)
         if (inGroups.length) { notify(S.dns.serverVGruppe(name), 'warning'); return }
@@ -628,7 +639,10 @@ export default function Dns({ live, board = false }: { live?: Live; board?: bool
          * несколько — группа в порядке отметки, ни одного — DNS роутера. Свой сервер у правила — в
          * самом правиле. Готовый профиль становится сервером роутера при первом выборе и уходит, когда
          * больше никому не нужен. */
-        const which = 'upstream' as const
+        /* Раздельно (#2964, #3023): имена под правилами — своим выбором (DnsTarget, как в 26.10), карточки — только
+         * для остальных сайтов. Включено само, если назначения в спеке уже разные (настройка 26.10 или ssh). */
+        const split = splitWanted || (dns.upstream ?? '') !== (dns.other ?? '')
+        const which = split ? 'other' as const : 'upstream' as const
         const listOf2 = (w: 'upstream' | 'other'): string[] => {
             const cur = dns[w]
             if (!cur) return []
@@ -638,7 +652,7 @@ export default function Dns({ live, board = false }: { live?: Live; board?: bool
         /* Отметки — по серверу доменов правил, а если он не задан — по серверу остальных имён:
          * старая форма вкладки записывала назначения порознь, и «DNS провайдера» горел при
          * заданном `dns.other`. Следующий щелчок пишет оба назначения одинаково (assign). */
-        const picked = listOf2('upstream').length ? listOf2('upstream') : listOf2('other')
+        const picked = split ? listOf2('other') : listOf2('upstream').length ? listOf2('upstream') : listOf2('other')
         const grp = dns[which] ? dns.groups?.[dns[which]!] : undefined
         const byUrl = new Map(Object.entries(ups).map(([n, u]) => [u.url, n]))
         const cards: { key: string; title: string; up: Upstream; name?: string; preset?: string }[] = [
@@ -654,14 +668,14 @@ export default function Dns({ live, board = false }: { live?: Live; board?: bool
         /** Все запросы — списком серверов: пусто — DNS роутера, один — сервер, больше — группа. Пишется
          *  в оба назначения (`dns.other` — где ядро его умеет); прежние группы, которые больше никому
          *  не нужны, уходят. */
-        function assign(_w: 'upstream', list: string[], base: DnsSpec): DnsSpec {
+        function assign(_w: 'upstream' | 'other', list: string[], base: DnsSpec, both = !split): DnsSpec {
             const next: DnsSpec = { ...base, groups: { ...(base.groups || {}) } }
-            const targets: ('upstream' | 'other')[] = ['upstream', 'other']
+            const targets: ('upstream' | 'other')[] = both ? ['upstream', 'other'] : ['other']
             const olds = targets.map((w) => base[w]).filter((g): g is string => !!g && !!base.groups?.[g])
             let value: string | undefined
             if (list.length === 1) value = list[0]
             else if (list.length > 1) {
-                const g = olds[0] ?? freeName('all', next)
+                const g = olds[0] ?? freeName(both ? 'all' : 'other', next)
                 next.groups![g] = { servers: list, mode: base.groups?.[g]?.mode || 'failover' }
                 value = g
             }
@@ -670,6 +684,19 @@ export default function Dns({ live, board = false }: { live?: Live; board?: bool
                 if (g !== value && !spec!.channels.some((c) => c.dns === g) && next.upstream !== g && next.other !== g) delete next.groups![g]
             }
             return next
+        }
+        /** Включить и выключить раздельный выбор. Включение разводит общую группу: правка группы имён под
+         *  правилами не должна менять группу остальных сайтов. Выключение — снова один выбор на всё:
+         *  серверы остальных сайтов, как они отмечены. */
+        function setSplit(on: boolean) {
+            setSplitWanted(on)
+            if (!on) { setDns(tidy(assign('other', listOf2('other'), dns, true))); return }
+            const cur = dns.upstream
+            const g = cur ? dns.groups?.[cur] : undefined
+            if (cur && g && cur === dns.other) {
+                const name = freeName('rules', dns)
+                setDns({ ...dns, groups: { ...(dns.groups || {}), [name]: { ...g, servers: [...g.servers] } }, upstream: name })
+            }
         }
         /** Серверы из готовых профилей, которые больше никому не нужны, — прочь из списка роутера. */
         const tidy = (d: DnsSpec): DnsSpec => pruneDnsUpstreams(d, spec!.channels)
@@ -688,9 +715,19 @@ export default function Dns({ live, board = false }: { live?: Live; board?: bool
 
         return (
             <div className="space-y-4">
+                {/* Имена под правилами — отдельным выбором, как в 26.10: DNS роутера, один сервер или несколько
+                    по очереди или сразу. Свой DNS у правила (в правиле) важнее этого. */}
+                {split && (
+                    <section className={GROUP}>
+                        <div className="px-1">
+                            <DnsTarget spec={spec} dns={dns} which="upstream" label={S.dns.dlyaImenPodPravilami}
+                                names={names} log={log} onDns={setDns} />
+                        </div>
+                    </section>
+                )}
                 <section className={GROUP}>
                     <div className="flex flex-wrap items-center justify-between gap-2 px-1 pt-1">
-                        <h2 className="sp-sub">{S.dns.vseZaprosyDns}</h2>
+                        <h2 className="sp-sub">{split ? S.dns.dlyaOstalnyhSaytov : S.dns.vseZaprosyDns}</h2>
                         <Button variant="ghost" size="sm" onClick={() => void probeAll()} disabled={probe.busy}>
                             <RefreshCw className={probe.busy ? 'animate-spin' : ''} aria-hidden="true" /> {S.dns.proverit}
                         </Button>
@@ -762,6 +799,9 @@ export default function Dns({ live, board = false }: { live?: Live; board?: bool
                         </button>
                     )}
                     {editing && ups[editing] && server(editing, TILE)}
+                    <div className="border-t border-border px-1 pt-1">
+                        <ToggleRow label={S.dns.otdelnyyDlyaPravil} on={split} onToggle={() => setSplit(!split)} />
+                    </div>
                 </section>
 
                 <section className={GROUP}>
