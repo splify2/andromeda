@@ -21,6 +21,7 @@ export default function PluginCatalog({ onChanged }: { onChanged?: () => void })
     const [q, setQ] = useState('')
     const [found, setFound] = useState<CatalogEntry[] | null>(null)
     const [failed, setFailed] = useState(false)
+    const [catalogError, setCatalogError] = useState('')
     const [repos, setRepos] = useState<RepoEntry[]>([])
     const [installing, setInstalling] = useState<{ id: string; step: string } | null>(null)
     const [url, setUrl] = useState('')
@@ -36,7 +37,11 @@ export default function PluginCatalog({ onChanged }: { onChanged?: () => void })
         const n = ++seq.current
         Promise.all([rpc.pluginsSearch(text || undefined), rpc.reposList().catch(() => ({ repos: [] }))])
             .then(([r, rp]) => {
-                if (n === seq.current) { setFound(normalizeCatalog(r.plugins, normalizeRepos(rp.repos))); setFailed(false) }
+                if (n === seq.current) {
+                    setFound(normalizeCatalog(r.plugins, normalizeRepos(rp.repos)))
+                    setCatalogError(r.errors || '')
+                    setFailed(false)
+                }
             })
             .catch(() => { if (n === seq.current) setFailed(true) })
     }, [])
@@ -118,7 +123,8 @@ export default function PluginCatalog({ onChanged }: { onChanged?: () => void })
                     className={`${inputCls} w-full`}
                 />
                 {failed && <p className="text-sm text-muted-foreground">{S.plugins.katalogNedostupen}</p>}
-                {!failed && found && found.length === 0 && (
+                {!failed && catalogError && <p role="alert" className="text-sm text-muted-foreground">{catalogError}</p>}
+                {!failed && !catalogError && found && found.length === 0 && (
                     <p className="text-sm text-muted-foreground">{q ? S.plugins.nichegoNeNaydeno : S.plugins.katalogPust}</p>
                 )}
                 <ul className="divide-y divide-border">

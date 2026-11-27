@@ -710,7 +710,7 @@ export const rpc = {
         steer?: string
     }>('paths'),
     /** Поиск по каталогам подключённых репозиториев; без слова — весь каталог. */
-    pluginsSearch: declare<{ plugins: unknown[] }>('plugins_search', ['query']),
+    pluginsSearch: declare<{ plugins: unknown[]; errors?: string }>('plugins_search', ['query']),
     /** Установка и обновление — задания: ответ `{ok, job}`, ход — `pluginJob`. */
     pluginInstall: declare<PluginAct>('plugin_install', ['id', 'version']),
     pluginUpdate: declare<PluginAct>('plugin_update', ['id']),

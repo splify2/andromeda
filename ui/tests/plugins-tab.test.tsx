@@ -68,6 +68,17 @@ beforeEach(async () => {
 })
 
 describe('вкладка «Плагины»', () => {
+    it('показывает ошибку индекса вместе с доступной частью каталога', async () => {
+        mockBackend()
+        vi.mocked(rpc.pluginsSearch).mockResolvedValue({
+            plugins: [{ id: 'warpbox', name: 'WarpBox', version: '1.4.0', repo: 'splify2' }],
+            errors: 'mirror: index download failed',
+        })
+        show()
+        expect(await screen.findByRole('alert')).toHaveTextContent('mirror: index download failed')
+        expect(await screen.findByText('WarpBox')).toBeInTheDocument()
+    })
+
     it('карточки: имя, версия, репозиторий, пометка стороннего, доступное обновление', async () => {
         mockBackend()
         show()
