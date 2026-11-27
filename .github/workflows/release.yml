@@ -28,6 +28,11 @@ concurrency:
 
 jobs:
   release:
+    env:
+      GIT_AUTHOR_NAME: xyzmean
+      GIT_AUTHOR_EMAIL: 163691714+xyzmean@users.noreply.github.com
+      GIT_COMMITTER_NAME: xyzmean
+      GIT_COMMITTER_EMAIL: 163691714+xyzmean@users.noreply.github.com
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -89,8 +94,8 @@ jobs:
 
       - name: SDK плагинов и splify2
         env:
-          SDK_REF: ${{ vars.PLUGIN_SDK_REF || 'main' }}
-          SPLIFY2_REF: ${{ vars.SPLIFY2_REF || 'main' }}
+          SDK_REF: release/2.2.0
+          SPLIFY2_REF: release/26.11.6
         run: |
           set -eu
           git clone -q --depth 1 --branch "$SDK_REF" https://github.com/splify2/plugin-sdk "$GITHUB_WORKSPACE/../plugin-sdk"
@@ -118,6 +123,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
           name: Andromeda ${{ env.VERSION }}
           prerelease: ${{ inputs.prerelease }}
           files: out/andromeda-${{ env.VERSION }}-all.s2p
